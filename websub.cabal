@@ -19,6 +19,8 @@ library
   exposed-modules:     Network.HTTP.WebSub
                      , Network.HTTP.WebSub.Subscriber
   build-depends:       base >= 4.7 && < 5
+                     , unordered-containers
+                     , hashable
                      , network-uri
                      , http-types
                      , http-media
@@ -33,6 +35,7 @@ executable websub-exe
   build-depends:       base
                      , websub
                      , network-uri
+                     , http-media
                      , bytestring
   default-language:    Haskell2010
 

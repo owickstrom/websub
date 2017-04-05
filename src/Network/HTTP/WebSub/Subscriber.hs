@@ -7,24 +7,50 @@ module Network.HTTP.WebSub.Subscriber
        , notify
        ) where
 
+import           Control.Concurrent           (forkIO)
+import           Control.Concurrent.Chan
+import           Control.Concurrent.MVar
+import           Control.Monad                (forever)
+
 import qualified Data.ByteString.Char8        as C
 import qualified Data.ByteString.Lazy         as LBS
 import           Data.Function                ((&))
-import           Network.HTTP.Media.MediaType (MediaType, (//))
+import           Data.HashMap.Strict          (HashMap)
+import qualified Data.HashMap.Strict          as HM
+
+import           Network.HTTP.Media.MediaType (MediaType)
 import           Network.HTTP.Simple          as HTTP
 import           Network.HTTP.Types.Status    (status202)
-import           Network.HTTP.WebSub          (Hub (..), Notification,
-                                               Subscriber,
-                                               SubscriptionMode (..),
-                                               SubscriptionRequest, Topic)
+import           Network.HTTP.WebSub
+
 import           Network.URI                  (URI, uriAuthority, uriRegName,
                                                uriScheme)
 
-data Client = Client
+newtype Client
+  = Client { subscribers :: MVar (HashMap CallbackURI (Chan Notification))
+           }
 
 
 newClient :: IO Client
-newClient = return Client
+newClient =
+  Client <$> newMVar HM.empty
+
+
+createSubscriberChan :: Client
+                     -> CallbackURI
+                     -> IO (Chan Notification)
+createSubscriberChan client callbackUri = do
+  chan <- newChan
+  modifyMVar_ (subscribers client) (return . HM.insert callbackUri chan)
+  return chan
+
+
+findSubscriberChan :: Client
+                   -> CallbackURI
+                   -> IO (Maybe (Chan Notification))
+findSubscriberChan client uri = do
+  chans <- readMVar (subscribers client)
+  return (HM.lookup uri chans)
 
 
 data SubscribeError
@@ -44,9 +70,9 @@ makeHubRequest (Hub hub) = do
 
 requestSubscription :: Client
                     -> Hub
-                    -> Subscriber
+                    -> SubscriptionRequest
                     -> IO (Either SubscribeError ())
-requestSubscription client hub subscriber =
+requestSubscription client hub subscriptionReq =
   case makeHubRequest hub of
     Just req -> do
       res <- httpLBS req
@@ -56,7 +82,7 @@ requestSubscription client hub subscriber =
     Nothing   -> return (Left (InvalidHub hub))
 
 
-type NotificationCallback = Topic -> Notification -> IO ()
+type NotificationCallback = Notification -> IO ()
 
 
 addNotificationCallback :: Client
@@ -69,19 +95,25 @@ addNotificationCallback client subscriber callback =
 
 subscribe :: Client
           -> Hub
-          -> Subscriber
+          -> SubscriptionRequest
           -> NotificationCallback
           -> IO ()
-subscribe client hub subscriber onNotification = do
-  requestSubscription client hub subscriber
+subscribe client hub req onNotification = do
+  chan <- createSubscriberChan client (callbackURI (subscriber req))
+  -- requestSubscription client hub req
+  forkIO $ forever (readChan chan >>= onNotification)
   return ()
 
 
 notify :: Client
-       -> Subscriber
-       -> Topic
+       -> CallbackURI
        -> Notification
-       -> IO ()
-notify client subscriber topic notification =
-  return ()
-  -- onNotification topic notification
+       -> IO Bool
+notify client callbackUri notification = do
+  c <- findSubscriberChan client callbackUri
+  case c of
+    Just chan -> do
+      writeChan chan notification
+      return True
+    Nothing ->
+      return False
