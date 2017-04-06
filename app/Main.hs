@@ -12,6 +12,7 @@ import           Network.URI
 
 import           System.Environment
 import           System.IO                      (hPutStrLn, stderr)
+import Text.Printf
 
 usage :: IO ()
 usage =
@@ -24,10 +25,15 @@ main =
       [topicUri] -> do
         topic <- Topic <$> parseUriOrFail topicUri
         client <- newClient clientBaseUri
-        subscribe client (hub topic) topic $ \notification -> do
-          putStr "Content Type: "
-          print (contentType notification)
-          C.putStrLn (body notification)
+        getHubLinks client topic >>=
+          \case
+            [] -> putStrLn "No hub found."
+            hub : _ -> do
+              putStrLn $ printf "Subscribing to %s through %s." (show topic) (show hub)
+              subscribe client hub topic $ \notification -> do
+                putStr "Content Type: "
+                print (contentType notification)
+                C.putStrLn (body notification)
 
         -- notify client callbackUri (Notification hub topic ("text" // "plain") "omg")
         -- notify client callbackUri (Notification hub topic ("text" // "html") "<h1>Cool</h1>")
@@ -35,6 +41,7 @@ main =
       args -> usage
 
   where
+
     clientBaseUri =
       URI "http" (Just (URIAuth "" "localhost" ":3000")) "/subscriptions" "" ""
 

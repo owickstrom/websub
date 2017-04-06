@@ -50,9 +50,9 @@ data SubscriptionRequest
 
 instance ToForm SubscriptionRequest where
   toForm SubscriptionRequest { callback = CallbackURI callback, mode = mode, topic = Topic topic} =
-    [ ("callback", tshow callback)
-    , ("mode", modeToValue mode)
-    , ("topic", tshow topic)
+    [ ("hub.callback", tshow callback)
+    , ("hub.mode", modeToValue mode)
+    , ("hub.topic", tshow topic)
     ]
     where
       tshow = Text.pack . show

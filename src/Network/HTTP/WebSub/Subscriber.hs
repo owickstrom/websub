@@ -5,6 +5,7 @@ module Network.HTTP.WebSub.Subscriber
        ( Client
        , newClient
        , subscribe
+       , getHubLinks
        , notify
        ) where
 
@@ -18,13 +19,18 @@ import qualified Data.ByteString.Lazy         as LBS
 import           Data.Function                ((&))
 import           Data.HashMap.Strict          (HashMap)
 import qualified Data.HashMap.Strict          as HM
+import           Data.Maybe                   (catMaybes)
+import           Data.Text                    (Text)
 
+import           Network.HTTP.Link.Parser     (parseLinkHeaderBS)
+import           Network.HTTP.Link.Types      (Link (..), LinkParam (..),
+                                               linkParams)
 import           Network.HTTP.Media.MediaType (MediaType)
 import           Network.HTTP.Simple          as HTTP
 import           Network.HTTP.Types.Status    (status202)
 import           Network.HTTP.WebSub
 import           Network.URI                  (URI, uriAuthority, uriRegName,
-                                               uriScheme)
+                                               uriScheme, uriToString)
 
 import           Web.FormUrlEncoded
 
@@ -60,19 +66,9 @@ data SubscribeError
   | HTTPError (HTTP.Response LBS.ByteString)
 
 
-makeHubRequest :: Hub
-               -> SubscriptionRequest
-               -> Maybe HTTP.Request
-makeHubRequest (Hub hub) subReq = do
-  let isHttps = uriScheme hub == "https:"
-  auth <- uriAuthority hub
-  return $
-    defaultRequest
-    & setRequestMethod "POST"
-    & setRequestSecure isHttps
-    & setRequestPort (if isHttps then 443 else 80)
-    & setRequestHost (C.pack (uriRegName auth))
-    & setRequestBodyLBS (urlEncodeAsForm subReq)
+requestFromUri :: URI -> Maybe Request
+requestFromUri uri =
+  parseRequest (uriToString id uri "")
 
 
 requestSubscription :: Client
@@ -82,12 +78,18 @@ requestSubscription :: Client
 requestSubscription client hub subReq =
   case makeHubRequest hub subReq of
     Just req -> do
+      LBS.putStrLn (urlEncodeAsForm subReq)
       res <- httpLBS req
       print res
       if getResponseStatus res == status202
          then return (Right ())
          else return (Left (HTTPError res))
     Nothing   -> return (Left (InvalidHub hub))
+  where
+    makeHubRequest (Hub hub) subReq =
+      setRequestMethod "POST"
+      . setRequestBodyLBS (urlEncodeAsForm subReq)
+      <$> requestFromUri hub
 
 
 type NotificationCallback = Notification -> IO ()
@@ -107,6 +109,33 @@ subscribe client hub topic onNotification = do
   return ()
 
 
+getHubLinks :: Client
+            -> Topic
+            -> IO [Hub]
+getHubLinks client (Topic uri) =
+  case setRequestMethod "HEAD" <$> requestFromUri uri of
+    Just req -> do
+      res <- httpNoBody req
+      return (hubLinks (getResponseHeader "Link" res))
+    Nothing ->
+      return []
+  where
+    isHubLink link =
+      lookup Rel (linkParams link) == Just "hub"
+
+    hubLinks :: [C.ByteString] -> [Hub]
+    hubLinks headers =
+      headers
+      & map parseLinkHeaderBS
+      & catMaybes
+      & concat
+      & filter isHubLink
+      & map toHub
+
+    toHub (Link uri _) =
+      Hub uri
+
+
 notify :: Client
        -> CallbackURI
        -> Notification
@@ -114,8 +143,7 @@ notify :: Client
 notify client callbackUri notification =
   findSubscriberChan client callbackUri >>=
     \case
-      Just chan -> do
-        writeChan chan notification
-        return True
+      Just chan ->
+        writeChan chan notification *> return True
       Nothing ->
         return False
