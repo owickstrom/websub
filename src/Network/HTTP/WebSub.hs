@@ -61,7 +61,6 @@ instance ToForm SubscriptionRequest where
           Subscribe -> "subscribe"
           Unsubscribe -> "unsubscribe"
 
-
 data Notification
   = Notification { hub         :: Hub
                  , topic       :: Topic
