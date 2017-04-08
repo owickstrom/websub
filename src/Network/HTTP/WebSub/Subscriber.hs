@@ -37,10 +37,13 @@ import Network.URI
 
 import Web.FormUrlEncoded
 
+data SubscriptionError
+  = ValidationFailed
+  | VerificationFailed
+
 data Subscription
-  = Pending SubscriptionRequest
-  | ValidationFailed SubscriptionRequest
-  | VerificationFailed SubscriptionRequest
+  = Pending SubscriptionRequest (MVar ())
+  | Failed  SubscriptionRequest SubscriptionError
   | Verified SubscriptionRequest
              (Chan Notification)
 
@@ -56,6 +59,18 @@ insertSubscription :: Client -> CallbackURI -> Subscription -> IO ()
 insertSubscription client callbackUri subscription =
   modifyMVar_ (subscribers client) (return . HM.insert callbackUri subscription)
 
+findSubscription :: Client -> CallbackURI -> IO (Maybe Subscription)
+findSubscription client uri = HM.lookup uri <$> readMVar (subscribers client)
+
+createPending :: Client
+              -> CallbackURI
+              -> SubscriptionRequest
+              -> IO (MVar ())
+createPending client callbackUri req = do
+  ready <- newEmptyMVar
+  insertSubscription client callbackUri (Pending req ready)
+  return ready
+
 createSubscriptionChan :: Client
                        -> CallbackURI
                        -> SubscriptionRequest
@@ -64,9 +79,6 @@ createSubscriptionChan client callbackUri req = do
   chan <- newChan
   insertSubscription client callbackUri (Verified req chan)
   return chan
-
-findSubscription :: Client -> CallbackURI -> IO (Maybe Subscription)
-findSubscription client uri = HM.lookup uri <$> readMVar (subscribers client)
 
 data SubscribeError
   = InvalidHub Hub
@@ -101,9 +113,11 @@ subscribe :: Client -> Hub -> Topic -> NotificationCallback -> IO ()
 subscribe client hub topic onNotification = do
   let callbackUri = CallbackURI (baseUri client)
       subReq = SubscriptionRequest callbackUri Subscribe topic
-  chan <- createSubscriptionChan client callbackUri subReq
   requestSubscription client hub subReq
-  forkIO $ forever (readChan chan >>= onNotification)
+  ready <- createPending client callbackUri subReq
+  readMVar ready
+  -- chan <- createSubscriptionChan client callbackUri subReq
+  -- forkIO $ forever (readChan chan >>= onNotification)
   return ()
 
 getHubLinks :: Client -> Topic -> IO [Hub]
@@ -123,12 +137,11 @@ getHubLinks client (Topic uri) =
 
 data NotifyError
   = SubscriptionNotFound
-  | SubscriptionNotVerified SubscriptionRequest
+  | SubscriptionFailed SubscriptionRequest SubscriptionError
 
 notify :: Client -> CallbackURI -> Notification -> IO (Either NotifyError ())
 notify client callbackUri notification =
   findSubscription client callbackUri >>= \case
     Just (Verified _ chan) -> writeChan chan notification *> return (Right ())
-    Just (ValidationFailed req) -> return (Left (SubscriptionNotVerified req))
-    Just (VerificationFailed req) -> return (Left (SubscriptionNotVerified req))
+    Just (Failed req err) -> return (Left (SubscriptionFailed req err))
     Nothing -> return (Left SubscriptionNotFound)

@@ -1,0 +1,24 @@
+@startuml
+!include styles.iuml
+
+state Pending
+state Invalid
+state Unverified
+state Active
+state Expired
+
+[*] --> Pending : subscribe
+Pending --> Invalid
+Invalid --> [*]
+
+Pending --> Unverified
+Unverified --> [*]
+
+Pending --> Active
+
+Active --> Active : renewal
+Active --> Expired : timeout
+Expired --> [*]
+
+
+@enduml
