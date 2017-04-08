@@ -7,10 +7,10 @@ state Active
 state Expired
 
 [*] --> Pending : subscribe
-Pending -right-> Denied : GET <callback-uri>?hub.mode=denied&...
+Pending -right-> Denied : deny
 Denied --> [*]
 
-Pending -down-> Active
+Pending -down-> Active : awaitActiveSubscription
 
 Active -left-> Active : renewal
 Active --> Expired : timeout
