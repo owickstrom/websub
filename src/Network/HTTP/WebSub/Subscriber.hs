@@ -2,6 +2,8 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE GADTs #-}
 
 module Network.HTTP.WebSub.Subscriber
@@ -12,6 +14,7 @@ module Network.HTTP.WebSub.Subscriber
   , subscribe
   , awaitActiveSubscription
   , deny
+  , verify
   , distributeContent
   ) where
 
@@ -43,6 +46,7 @@ import Web.FormUrlEncoded
 data SubscribeError
   = InvalidHub Hub
   | SubscriptionDenied Denial
+  | VerificationFailed
   | UnexpectedError LBS.ByteString
   deriving (Show, Eq, Ord)
 
@@ -119,15 +123,13 @@ subscribe
   -> IO (Either SubscribeError ())
 subscribe subscriptions hub topic = do
   let callbackUri = CallbackURI (baseUri subscriptions)
-      subReq = SubscriptionRequest callbackUri Subscribe topic
+      subReq = SubscriptionRequest callbackUri Subscribe topic 3600
   requestSubscription (client subscriptions) hub subReq >>=
     \case
       Left err -> return (Left err)
-      Right () -> do
-        putStrLn "Creating pending subscription."
+      Right () ->
         -- Create and await the transition from 'Pending' to 'Failed' or 'Active'.
-        createPending subscriptions callbackUri subReq
-        return (Right ())
+        createPending subscriptions callbackUri subReq *> return (Right ())
   where
     createSubscriptionChan subscriptions callbackUri req = do
       chan <- newChan
@@ -160,6 +162,21 @@ deny subscriptions callbackUri denial =
       Just (Pending _ result) ->
         putMVar result (Left (SubscriptionDenied denial)) *> return True
       Nothing -> return False
+
+verify :: Subscriptions c -> CallbackURI -> VerificationRequest -> IO Bool
+verify subscriptions callbackUri VerificationRequest { topic = verTopic } =
+  findPendingSubscription subscriptions callbackUri >>=
+    \case
+      Just (Pending subReq@SubscriptionRequest { topic = subTopic } result)
+        | verTopic == subTopic -> do
+          notifications <- newChan
+          putMVar result (Right (Active subReq notifications))
+          return True
+        | otherwise -> do
+          putMVar result (Left VerificationFailed)
+          return False
+      Nothing ->
+        return False
 
 distributeContent :: Subscriptions c -> CallbackURI -> Notification -> IO Bool
 distributeContent subscriptions callbackUri notification =

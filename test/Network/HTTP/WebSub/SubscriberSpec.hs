@@ -48,3 +48,19 @@ spec = do
       subscribe subs hub topic
       deny subs callbackUri denial `shouldReturn` True
       awaitActiveSubscription subs callbackUri `shouldFailWith` SubscriptionDenied denial
+
+    it "does not activate the subscription when verified with incorrect values" $ do
+      let client = StubClient (Right ()) []
+          verReq = VerificationRequest Subscribe (Topic URI.nullURI { uriPath = "/foo/bar" }) "" 1
+      subs <- newSubscriptions URI.nullURI client
+      subscribe subs hub topic
+      verify subs callbackUri verReq `shouldReturn` False
+      awaitActiveSubscription subs callbackUri `shouldFailWith` VerificationFailed
+
+    it "activates the subscription when verified with correct values" $ do
+      let client = StubClient (Right ()) []
+          verReq = VerificationRequest Subscribe topic "" 1
+      subs <- newSubscriptions URI.nullURI client
+      subscribe subs hub topic
+      verify subs callbackUri verReq `shouldReturn` True
+      void <$> awaitActiveSubscription subs callbackUri `shouldReturn` Right ()

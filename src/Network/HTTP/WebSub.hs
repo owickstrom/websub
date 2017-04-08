@@ -38,7 +38,8 @@ data SubscriptionRequest = SubscriptionRequest
   { callback :: CallbackURI
   , mode :: SubscriptionMode
   , topic :: Topic
-                        -- TODO: Add support for lease_seconds and secret
+  , leaseSeconds :: Int
+                        -- TODO: Add support for secret
   } deriving (Eq, Ord, Show)
 
 instance ToForm SubscriptionRequest where
@@ -61,6 +62,13 @@ data Denial = Denial
   { topic :: Topic
   , reason :: ByteString
   } deriving (Show, Eq, Ord)
+
+data VerificationRequest = VerificationRequest
+  { mode :: SubscriptionMode
+  , topic :: Topic
+  , challenge :: ByteString
+  , leaseSeconds :: Int
+  } deriving (Eq, Ord, Show)
 
 data Notification = Notification
   { hub :: Hub
