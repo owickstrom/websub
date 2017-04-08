@@ -37,15 +37,13 @@ import Network.URI
 
 import Web.FormUrlEncoded
 
-data SubscriptionError
-  = ValidationFailed
-  | VerificationFailed
-
 data Subscription
-  = Pending SubscriptionRequest (MVar ())
-  | Failed  SubscriptionRequest SubscriptionError
-  | Verified SubscriptionRequest
-             (Chan Notification)
+  = Pending SubscriptionRequest
+            (MVar ())
+  | Invalid SubscriptionRequest
+  | Unverified SubscriptionRequest
+  | Active SubscriptionRequest
+           (Chan Notification)
 
 data Client = Client
   { baseUri :: URI
@@ -62,10 +60,7 @@ insertSubscription client callbackUri subscription =
 findSubscription :: Client -> CallbackURI -> IO (Maybe Subscription)
 findSubscription client uri = HM.lookup uri <$> readMVar (subscribers client)
 
-createPending :: Client
-              -> CallbackURI
-              -> SubscriptionRequest
-              -> IO (MVar ())
+createPending :: Client -> CallbackURI -> SubscriptionRequest -> IO (MVar ())
 createPending client callbackUri req = do
   ready <- newEmptyMVar
   insertSubscription client callbackUri (Pending req ready)
@@ -77,7 +72,7 @@ createSubscriptionChan :: Client
                        -> IO (Chan Notification)
 createSubscriptionChan client callbackUri req = do
   chan <- newChan
-  insertSubscription client callbackUri (Verified req chan)
+  insertSubscription client callbackUri (Active req chan)
   return chan
 
 data SubscribeError
@@ -137,11 +132,12 @@ getHubLinks client (Topic uri) =
 
 data NotifyError
   = SubscriptionNotFound
-  | SubscriptionFailed SubscriptionRequest SubscriptionError
+  | SubscriptionNotActive
 
 notify :: Client -> CallbackURI -> Notification -> IO (Either NotifyError ())
 notify client callbackUri notification =
   findSubscription client callbackUri >>= \case
-    Just (Verified _ chan) -> writeChan chan notification *> return (Right ())
-    Just (Failed req err) -> return (Left (SubscriptionFailed req err))
+    Just (Active _ chan) -> writeChan chan notification *> return (Right ())
+    Just (Invalid req) -> return (Left SubscriptionNotActive)
+    Just (Unverified req) -> return (Left SubscriptionNotActive)
     Nothing -> return (Left SubscriptionNotFound)
