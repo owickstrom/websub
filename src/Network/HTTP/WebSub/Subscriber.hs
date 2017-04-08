@@ -113,11 +113,14 @@ subscribe
 subscribe subscriptions hub topic = do
   let callbackUri = CallbackURI (baseUri subscriptions)
       subReq = SubscriptionRequest callbackUri Subscribe topic
-  requestSubscription (client subscriptions) hub subReq
-  -- Create and await the transition from 'Pending' to 'Failed' or 'Active'.
-  createPending subscriptions callbackUri subReq >>= readMVar >>= \case
-    Left err -> return (Left err)
-    Right (Active _ chan) -> return (Right chan)
+  requestSubscription (client subscriptions) hub subReq >>=
+    \case
+      Left err -> return (Left err)
+      Right () ->
+        -- Create and await the transition from 'Pending' to 'Failed' or 'Active'.
+        createPending subscriptions callbackUri subReq >>= readMVar >>= \case
+          Left err -> return (Left err)
+          Right (Active _ chan) -> return (Right chan)
   where
     createSubscriptionChan subscriptions callbackUri req = do
       chan <- newChan
