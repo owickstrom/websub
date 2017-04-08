@@ -2,13 +2,14 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 
 module Network.HTTP.WebSub.Subscriber
   ( Client
   , newClient
   , subscribe
   , getHubLinks
-  , notify
+  , distributeContent
   ) where
 
 import Control.Concurrent (forkIO)
@@ -37,47 +38,47 @@ import Network.URI
 
 import Web.FormUrlEncoded
 
-data Subscription
-  = Pending SubscriptionRequest
-            (MVar ())
-  | Invalid SubscriptionRequest
-  | Unverified SubscriptionRequest
-  | Active SubscriptionRequest
-           (Chan Notification)
+data SubscribeError
+  = InvalidHub Hub
+  | SubscriptionDenied
+  | UnexpectedError (HTTP.Response LBS.ByteString)
+
+data Pending
+
+data Failed
+
+data Active
+
+data Subscription s where
+        Pending ::
+          SubscriptionRequest ->
+            MVar (Either SubscribeError (Subscription Active)) ->
+              Subscription Pending
+        Denied :: SubscriptionRequest -> Subscription Failed
+        Active ::
+          SubscriptionRequest -> Chan Notification -> Subscription Active
 
 data Client = Client
   { baseUri :: URI
-  , subscribers :: MVar (HashMap CallbackURI Subscription)
+  , pending :: MVar (HashMap CallbackURI (Subscription Pending))
+  , active :: MVar (HashMap CallbackURI (Subscription Active))
   }
 
 newClient :: URI -> IO Client
-newClient baseUri = Client baseUri <$> newMVar HM.empty
+newClient baseUri = Client baseUri <$> newMVar HM.empty <*> newMVar HM.empty
 
-insertSubscription :: Client -> CallbackURI -> Subscription -> IO ()
-insertSubscription client callbackUri subscription =
-  modifyMVar_ (subscribers client) (return . HM.insert callbackUri subscription)
-
-findSubscription :: Client -> CallbackURI -> IO (Maybe Subscription)
-findSubscription client uri = HM.lookup uri <$> readMVar (subscribers client)
-
-createPending :: Client -> CallbackURI -> SubscriptionRequest -> IO (MVar ())
+createPending
+  :: Client
+  -> CallbackURI
+  -> SubscriptionRequest
+  -> IO (MVar (Either SubscribeError (Subscription Active)))
 createPending client callbackUri req = do
   ready <- newEmptyMVar
   insertSubscription client callbackUri (Pending req ready)
   return ready
-
-createSubscriptionChan :: Client
-                       -> CallbackURI
-                       -> SubscriptionRequest
-                       -> IO (Chan Notification)
-createSubscriptionChan client callbackUri req = do
-  chan <- newChan
-  insertSubscription client callbackUri (Active req chan)
-  return chan
-
-data SubscribeError
-  = InvalidHub Hub
-  | HTTPError (HTTP.Response LBS.ByteString)
+  where
+    insertSubscription client callbackUri subscription =
+      modifyMVar_ (pending client) (return . HM.insert callbackUri subscription)
 
 requestFromUri :: URI -> Maybe Request
 requestFromUri uri
@@ -95,7 +96,7 @@ requestSubscription client hub subReq =
       res <- httpLBS req
       if getResponseStatus res == status202
         then return (Right ())
-        else return (Left (HTTPError res))
+        else return (Left (UnexpectedError res))
     Nothing -> return (Left (InvalidHub hub))
   where
     makeHubRequest (Hub hub) subReq =
@@ -104,16 +105,31 @@ requestSubscription client hub subReq =
 
 type NotificationCallback = Notification -> IO ()
 
-subscribe :: Client -> Hub -> Topic -> NotificationCallback -> IO ()
-subscribe client hub topic onNotification = do
+findActiveSubscription :: Client
+                       -> CallbackURI
+                       -> IO (Maybe (Subscription Active))
+findActiveSubscription client uri = HM.lookup uri <$> readMVar (active client)
+
+subscribe :: Client
+          -> Hub
+          -> Topic
+          -> IO (Either SubscribeError (Chan Notification))
+subscribe client hub topic = do
   let callbackUri = CallbackURI (baseUri client)
       subReq = SubscriptionRequest callbackUri Subscribe topic
   requestSubscription client hub subReq
-  ready <- createPending client callbackUri subReq
-  readMVar ready
-  -- chan <- createSubscriptionChan client callbackUri subReq
-  -- forkIO $ forever (readChan chan >>= onNotification)
-  return ()
+  -- Create and await the transition from 'Pending' to 'Failed' or 'Active'.
+  createPending client callbackUri subReq >>= readMVar >>=
+    \case
+      Left err -> return (Left err)
+      Right (Active _ chan) -> return (Right chan)
+  where
+    createSubscriptionChan client callbackUri req = do
+      chan <- newChan
+      insertSubscription client callbackUri (Active req chan)
+      return chan
+    insertSubscription client callbackUri subscription =
+      modifyMVar_ (active client) (return . HM.insert callbackUri subscription)
 
 getHubLinks :: Client -> Topic -> IO [Hub]
 getHubLinks client (Topic uri) =
@@ -130,14 +146,8 @@ getHubLinks client (Topic uri) =
       map toHub
     toHub (Link uri _) = Hub uri
 
-data NotifyError
-  = SubscriptionNotFound
-  | SubscriptionNotActive
-
-notify :: Client -> CallbackURI -> Notification -> IO (Either NotifyError ())
-notify client callbackUri notification =
-  findSubscription client callbackUri >>= \case
-    Just (Active _ chan) -> writeChan chan notification *> return (Right ())
-    Just (Invalid req) -> return (Left SubscriptionNotActive)
-    Just (Unverified req) -> return (Left SubscriptionNotActive)
-    Nothing -> return (Left SubscriptionNotFound)
+distributeContent :: Client -> CallbackURI -> Notification -> IO Bool
+distributeContent client callbackUri notification =
+  findActiveSubscription client callbackUri >>= \case
+    Just (Active _ chan) -> writeChan chan notification *> return True
+    Nothing -> return False

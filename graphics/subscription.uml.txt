@@ -2,19 +2,15 @@
 !include styles.iuml
 
 state Pending
-state Invalid
-state Unverified
+state Denied
 state Active
 state Expired
 
 [*] --> Pending : subscribe
-Pending --> Invalid
-Invalid --> [*]
+Pending -right-> Denied : GET <callback-uri>?hub.mode=denied&...
+Denied --> [*]
 
-Pending --> Unverified
-Unverified --> [*]
-
-Pending --> Active
+Pending -left-> Active
 
 Active --> Active : renewal
 Active --> Expired : timeout
