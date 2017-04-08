@@ -3,7 +3,7 @@
 </div>
 
 <p align="center">
-<em>A [WebSub (RFC7230)](https://www.w3.org/TR/websub/)] client for Haskell</em>
+<em>A <a href="https://www.w3.org/TR/websub/">WebSub (RFC7230)</a> client for Haskell</em>
 </p>
 
 
