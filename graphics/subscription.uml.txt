@@ -10,9 +10,9 @@ state Expired
 Pending -right-> Denied : GET <callback-uri>?hub.mode=denied&...
 Denied --> [*]
 
-Pending -left-> Active
+Pending -down-> Active
 
-Active --> Active : renewal
+Active -left-> Active : renewal
 Active --> Expired : timeout
 Expired --> [*]
 
