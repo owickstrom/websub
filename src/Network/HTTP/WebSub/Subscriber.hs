@@ -10,6 +10,8 @@ module Network.HTTP.WebSub.Subscriber
   , Subscriptions
   , newSubscriptions
   , subscribe
+  , awaitActiveSubscription
+  , deny
   , distributeContent
   ) where
 
@@ -40,7 +42,7 @@ import Web.FormUrlEncoded
 
 data SubscribeError
   = InvalidHub Hub
-  | SubscriptionDenied
+  | SubscriptionDenied Denial
   | UnexpectedError LBS.ByteString
   deriving (Show, Eq, Ord)
 
@@ -53,7 +55,7 @@ class Client c where
 
 data Pending
 
-data Failed
+data Denied
 
 data Active
 
@@ -62,7 +64,7 @@ data Subscription s where
           SubscriptionRequest ->
             MVar (Either SubscribeError (Subscription Active)) ->
               Subscription Pending
-        Denied :: SubscriptionRequest -> Subscription Failed
+        Denied :: SubscriptionRequest -> Subscription Denied
         Active ::
           SubscriptionRequest -> Chan Notification -> Subscription Active
 
@@ -85,11 +87,10 @@ createPending
   :: Subscriptions c
   -> CallbackURI
   -> SubscriptionRequest
-  -> IO (MVar (Either SubscribeError (Subscription Active)))
+  -> IO ()
 createPending subscriptions callbackUri req = do
   ready <- newEmptyMVar
   insertSubscription subscriptions callbackUri (Pending req ready)
-  return ready
   where
     insertSubscription subscriptions callbackUri subscription =
       modifyMVar_
@@ -97,6 +98,12 @@ createPending subscriptions callbackUri req = do
         (return . HM.insert callbackUri subscription)
 
 type NotificationCallback = Notification -> IO ()
+
+findPendingSubscription :: Subscriptions c
+                        -> CallbackURI
+                        -> IO (Maybe (Subscription Pending))
+findPendingSubscription subscriptions uri =
+  HM.lookup uri <$> readMVar (pending subscriptions)
 
 findActiveSubscription :: Subscriptions c
                        -> CallbackURI
@@ -109,18 +116,18 @@ subscribe
   => Subscriptions c
   -> Hub
   -> Topic
-  -> IO (Either SubscribeError (Chan Notification))
+  -> IO (Either SubscribeError ())
 subscribe subscriptions hub topic = do
   let callbackUri = CallbackURI (baseUri subscriptions)
       subReq = SubscriptionRequest callbackUri Subscribe topic
   requestSubscription (client subscriptions) hub subReq >>=
     \case
       Left err -> return (Left err)
-      Right () ->
+      Right () -> do
+        putStrLn "Creating pending subscription."
         -- Create and await the transition from 'Pending' to 'Failed' or 'Active'.
-        createPending subscriptions callbackUri subReq >>= readMVar >>= \case
-          Left err -> return (Left err)
-          Right (Active _ chan) -> return (Right chan)
+        createPending subscriptions callbackUri subReq
+        return (Right ())
   where
     createSubscriptionChan subscriptions callbackUri req = do
       chan <- newChan
@@ -130,6 +137,29 @@ subscribe subscriptions hub topic = do
       modifyMVar_
         (active subscriptions)
         (return . HM.insert callbackUri subscription)
+
+awaitActiveSubscription
+  :: Client c
+  => Subscriptions c
+  -> CallbackURI
+  -> IO (Either SubscribeError (Chan Notification))
+awaitActiveSubscription subscriptions callbackUri =
+  findPendingSubscription subscriptions callbackUri >>=
+    \case
+      Nothing -> return (Left (UnexpectedError "Pending subscription not found."))
+      Just (Pending _ pendingResult) ->
+        readMVar pendingResult >>=
+           \case
+              Left err -> return (Left err)
+              Right (Active _ notifications) -> return (Right notifications)
+
+deny :: Subscriptions c -> CallbackURI -> Denial -> IO Bool
+deny subscriptions callbackUri denial =
+  findPendingSubscription subscriptions callbackUri >>=
+    \case
+      Just (Pending _ result) ->
+        putMVar result (Left (SubscriptionDenied denial)) *> return True
+      Nothing -> return False
 
 distributeContent :: Subscriptions c -> CallbackURI -> Notification -> IO Bool
 distributeContent subscriptions callbackUri notification =

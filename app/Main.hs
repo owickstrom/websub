@@ -36,12 +36,16 @@ main =
           res <- subscribe subscriptions hub topic
           case res of
             Left err -> putStrLn $ printf "Subscription failed: %s" (show err)
-            Right notifications ->
-              void $ forkIO $ forever $ do
-                notification <- readChan notifications
-                putStr "Content Type: "
-                print (contentType notification)
-                C.putStrLn (body notification)
+            Right () ->
+              awaitActiveSubscription subscriptions callbackUri >>=
+                \case
+                  Left err -> putStrLn $ printf "Subscription failed: %s" (show err)
+                  Right notifications ->
+                    void $ forkIO $ forever $ do
+                      notification <- readChan notifications
+                      putStr "Content Type: "
+                      print (contentType notification)
+                      C.putStrLn (body notification)
     args -> usage
   where
     clientBaseUri =
