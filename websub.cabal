@@ -18,6 +18,7 @@ library
   hs-source-dirs:      src
   exposed-modules:     Network.HTTP.WebSub
                      , Network.HTTP.WebSub.Subscriber
+                     , Network.HTTP.WebSub.HTTPClient
   build-depends:       base >= 4.7 && < 5
                      , mtl
                      , unordered-containers
