@@ -71,7 +71,8 @@ data Subscription s where
               Subscription Pending
         Denied :: SubscriptionRequest -> Subscription Denied
         Active ::
-          SubscriptionRequest -> Chan ContentDistribution -> Subscription Active
+          SubscriptionRequest ->
+            Chan ContentDistribution -> Subscription Active
 
 data Subscriptions c = Subscriptions
   { baseUri :: URI
@@ -161,7 +162,10 @@ verify subscriptions callbackUri VerificationRequest {topic = verTopic} =
         return False
     Nothing -> return False
 
-distributeContent :: Subscriptions c -> CallbackURI -> ContentDistribution -> IO Bool
+distributeContent :: Subscriptions c
+                  -> CallbackURI
+                  -> ContentDistribution
+                  -> IO Bool
 distributeContent subscriptions callbackUri notification =
   findActiveSubscription subscriptions callbackUri >>= \case
     Just (Active _ chan) -> writeChan chan notification *> return True

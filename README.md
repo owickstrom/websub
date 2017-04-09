@@ -24,6 +24,15 @@ The following diagram shows how the subscription can change state.
 I've just started hacking on this, so if you're interested in helping out or
 giving feedback, post an issue and we'll take it from there.
 
+### Code Style
+
+This project uses [hindent](https://github.com/commercialhaskell/hindent) to
+do consistent formatting. You can run hindent on all source files like so:
+
+``` bash
+make indent
+```
+
 ## License
 
 [Mozilla Public License v2.0](LICENSE).

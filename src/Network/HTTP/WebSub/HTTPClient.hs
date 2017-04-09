@@ -46,10 +46,10 @@ instance Client HTTPSubscriberClient where
       Nothing -> throwError (InvalidHub hub)
     where
       makeHubRequest (Hub hub) subReq =
-        requestFromUri hub
-        & fmap (setRequestMethod "POST")
-        & fmap (setRequestHeader "Content-Type" ["application/x-www-form-urlencoded"])
-        & fmap (setRequestBodyLBS (urlEncodeAsForm subReq))
+        requestFromUri hub & fmap (setRequestMethod "POST") &
+        fmap
+          (setRequestHeader "Content-Type" ["application/x-www-form-urlencoded"]) &
+        fmap (setRequestBodyLBS (urlEncodeAsForm subReq))
   getHubLinks _ (Topic uri) =
     case setRequestMethod "HEAD" <$> requestFromUri uri of
       Just req -> do
