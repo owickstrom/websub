@@ -49,7 +49,7 @@ main =
     args -> usage
   where
     clientBaseUri =
-      URI "http" (Just (URIAuth "" "localhost" ":3000")) "/subscriptions" "" ""
+      URI "http:" (Just (URIAuth "" "localhost" ":3000")) "/subscriptions" "" ""
     hub (Topic topicUri)
       -- Hack for now, pleases websub.rocks URI scheme.
      = Hub $ topicUri {uriPath = uriPath topicUri ++ "/hub"}

@@ -70,7 +70,7 @@ data VerificationRequest = VerificationRequest
   , leaseSeconds :: Int
   } deriving (Eq, Ord, Show)
 
-data Notification = Notification
+data ContentDistribution = ContentDistribution
   { hub :: Hub
   , topic :: Topic
   , contentType :: MediaType

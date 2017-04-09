@@ -1,6 +1,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleContexts #-}
+
 module Network.HTTP.WebSub.HTTPClient where
 
 import Control.Monad.Except
@@ -31,21 +32,24 @@ requestFromUri uri
   -- parsing it as a Request.
  = parseRequest (uriToString id uri "")
 
-data HTTPSubscriberClient = HTTPSubscriberClient
+data HTTPSubscriberClient =
+  HTTPSubscriberClient
 
 instance Client HTTPSubscriberClient where
   requestSubscription _ hub subReq =
     case makeHubRequest hub subReq of
       Just req -> do
         res <- httpLBS req
+        lift $ print res
         unless (getResponseStatus res == status202) $
           throwError (UnexpectedError (getResponseBody res))
       Nothing -> throwError (InvalidHub hub)
     where
       makeHubRequest (Hub hub) subReq =
-        setRequestMethod "POST" . setRequestBodyLBS (urlEncodeAsForm subReq) <$>
         requestFromUri hub
-
+        & fmap (setRequestMethod "POST")
+        & fmap (setRequestHeader "Content-Type" ["application/x-www-form-urlencoded"])
+        & fmap (setRequestBodyLBS (urlEncodeAsForm subReq))
   getHubLinks _ (Topic uri) =
     case setRequestMethod "HEAD" <$> requestFromUri uri of
       Just req -> do

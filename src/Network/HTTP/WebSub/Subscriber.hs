@@ -71,7 +71,7 @@ data Subscription s where
               Subscription Pending
         Denied :: SubscriptionRequest -> Subscription Denied
         Active ::
-          SubscriptionRequest -> Chan Notification -> Subscription Active
+          SubscriptionRequest -> Chan ContentDistribution -> Subscription Active
 
 data Subscriptions c = Subscriptions
   { baseUri :: URI
@@ -101,7 +101,7 @@ createPending subscriptions callbackUri req = do
       (pending subscriptions)
       (return . HM.insert callbackUri (Pending req ready))
 
-type NotificationCallback = Notification -> IO ()
+type ContentDistributionCallback = ContentDistribution -> IO ()
 
 findPendingSubscription :: Subscriptions c
                         -> CallbackURI
@@ -129,15 +129,15 @@ awaitActiveSubscription
   :: Client c
   => Subscriptions c
   -> CallbackURI
-  -> IO (Either SubscribeError (Chan Notification))
+  -> IO (Either SubscribeError (Chan ContentDistribution))
 awaitActiveSubscription subscriptions callbackUri =
   runExceptT $ do
-    Pending _ pendingResult <- do
-      pending <- lift (findPendingSubscription subscriptions callbackUri)
-      maybe
-        (throwError (UnexpectedError "Pending subscription not found."))
-        return
-        pending
+    Pending _ pendingResult <-
+      do pending <- lift (findPendingSubscription subscriptions callbackUri)
+         maybe
+           (throwError (UnexpectedError "Pending subscription not found."))
+           return
+           pending
     Active _ notifications <- ExceptT (readMVar pendingResult)
     return notifications
 
@@ -161,7 +161,7 @@ verify subscriptions callbackUri VerificationRequest {topic = verTopic} =
         return False
     Nothing -> return False
 
-distributeContent :: Subscriptions c -> CallbackURI -> Notification -> IO Bool
+distributeContent :: Subscriptions c -> CallbackURI -> ContentDistribution -> IO Bool
 distributeContent subscriptions callbackUri notification =
   findActiveSubscription subscriptions callbackUri >>= \case
     Just (Active _ chan) -> writeChan chan notification *> return True
