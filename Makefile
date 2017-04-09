@@ -10,4 +10,5 @@ graphics/subscription.uml.png: graphics/subscription.uml.txt graphics/styles.ium
 	java -jar deps/plantuml.jar -tpng $<
 
 indent:
-	find src -name '*.hs' -exec hindent {} \;
+	stack install hindent
+	find src test -name '*.hs' -exec stack exec hindent -- {} \;

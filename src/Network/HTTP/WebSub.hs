@@ -7,12 +7,12 @@
 
 module Network.HTTP.WebSub where
 
-import Data.Text.Encoding (encodeUtf8)
-import Data.Monoid ((<>))
 import Data.ByteString.Lazy (ByteString)
 import Data.ByteString.Lazy as LBS
 import Data.Hashable
+import Data.Monoid ((<>))
 import qualified Data.Text as Text
+import Data.Text.Encoding (encodeUtf8)
 import Network.HTTP.Media.MediaType (MediaType)
 import Network.URI (URI, parseURI)
 import Web.FormUrlEncoded
@@ -87,11 +87,11 @@ data VerificationRequest = VerificationRequest
   } deriving (Eq, Ord, Show)
 
 instance FromForm VerificationRequest where
-  fromForm f = VerificationRequest
-    <$> parseUnique "hub.mode" f
-    <*> parseUnique "hub.topic" f
-    <*> parseChallenge
-    <*> parseMaybe "hub.lease_seconds" f
+  fromForm f =
+    VerificationRequest <$> parseUnique "hub.mode" f <*>
+    parseUnique "hub.topic" f <*>
+    parseChallenge <*>
+    parseMaybe "hub.lease_seconds" f
     where
       parseChallenge =
         LBS.fromStrict . encodeUtf8 <$> parseUnique "hub.challenge" f

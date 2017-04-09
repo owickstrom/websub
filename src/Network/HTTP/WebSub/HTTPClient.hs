@@ -40,7 +40,6 @@ instance Client HTTPSubscriberClient where
     case makeHubRequest hub subReq of
       Just req -> do
         res <- httpLBS req
-        lift $ print subReq
         unless (getResponseStatus res == status202) $
           throwError (UnexpectedError (getResponseBody res))
       Nothing -> throwError (InvalidHub hub)

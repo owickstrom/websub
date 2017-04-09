@@ -43,6 +43,7 @@ executable websub-exe
                      , websub
                      , network-uri
                      , http-media
+                     , http-types
                      , bytestring
                      , wai
                      , warp
