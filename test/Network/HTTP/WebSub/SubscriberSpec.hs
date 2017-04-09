@@ -5,6 +5,7 @@ module Network.HTTP.WebSub.SubscriberSpec where
 import Control.Concurrent
 import Control.Concurrent.MVar
 import Control.Monad
+import Control.Monad.Except
 import Network.HTTP.WebSub
 import Network.HTTP.WebSub.Subscriber
 import Network.URI as URI
@@ -17,7 +18,7 @@ data StubClient = StubClient
   }
 
 instance Client StubClient where
-  requestSubscription client _ _ = return (requestSubscriptionResponse client)
+  requestSubscription client _ _ = ExceptT (return (requestSubscriptionResponse client))
   getHubLinks client _ = return (links client)
 
 shouldFailWith :: (Eq e, Show e) => IO (Either e a) -> e -> Expectation

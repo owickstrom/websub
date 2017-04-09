@@ -21,6 +21,7 @@ module Network.HTTP.WebSub.Subscriber
 import Control.Concurrent.Chan
 import Control.Concurrent.MVar
 import Control.Monad (forever)
+import Control.Monad.Except
 import Control.Monad.IO.Class (MonadIO, liftIO)
 
 import qualified Data.ByteString.Char8 as C
@@ -28,7 +29,7 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Function ((&))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
-import Data.Maybe (catMaybes)
+import Data.Maybe (maybe, catMaybes)
 import Data.Text (Text)
 
 import Network.HTTP.Link.Parser (parseLinkHeaderBS)
@@ -54,7 +55,7 @@ class Client c where
   requestSubscription :: c
                       -> Hub
                       -> SubscriptionRequest
-                      -> IO (Either SubscribeError ())
+                      -> ExceptT SubscribeError IO ()
   getHubLinks :: c -> Topic -> IO [Hub]
 
 data Pending
@@ -79,7 +80,8 @@ data Subscriptions c = Subscriptions
   , active :: MVar (HashMap CallbackURI (Subscription Active))
   }
 
-instance Client c => Client (Subscriptions c) where
+instance Client c =>
+         Client (Subscriptions c) where
   requestSubscription = requestSubscription . client
   getHubLinks = getHubLinks . client
 
@@ -91,15 +93,13 @@ createPending
   :: Subscriptions c
   -> CallbackURI
   -> SubscriptionRequest
-  -> IO ()
+  -> ExceptT SubscribeError IO ()
 createPending subscriptions callbackUri req = do
-  ready <- newEmptyMVar
-  insertSubscription subscriptions callbackUri (Pending req ready)
-  where
-    insertSubscription subscriptions callbackUri subscription =
-      modifyMVar_
-        (pending subscriptions)
-        (return . HM.insert callbackUri subscription)
+  ready <- lift newEmptyMVar
+  lift $
+    modifyMVar_
+      (pending subscriptions)
+      (return . HM.insert callbackUri (Pending req ready))
 
 type NotificationCallback = Notification -> IO ()
 
@@ -117,28 +117,13 @@ findActiveSubscription subscriptions uri =
 
 subscribe
   :: Client c
-  => Subscriptions c
-  -> Hub
-  -> Topic
-  -> IO (Either SubscribeError ())
-subscribe subscriptions hub topic = do
-  let callbackUri = CallbackURI (baseUri subscriptions)
-      subReq = SubscriptionRequest callbackUri Subscribe topic 3600
-  requestSubscription (client subscriptions) hub subReq >>=
-    \case
-      Left err -> return (Left err)
-      Right () ->
-        -- Create and await the transition from 'Pending' to 'Failed' or 'Active'.
-        createPending subscriptions callbackUri subReq *> return (Right ())
-  where
-    createSubscriptionChan subscriptions callbackUri req = do
-      chan <- newChan
-      insertSubscription subscriptions callbackUri (Active req chan)
-      return chan
-    insertSubscription subscriptions callbackUri subscription =
-      modifyMVar_
-        (active subscriptions)
-        (return . HM.insert callbackUri subscription)
+  => Subscriptions c -> Hub -> Topic -> IO (Either SubscribeError ())
+subscribe subscriptions hub topic =
+  runExceptT $ do
+    let callbackUri = CallbackURI (baseUri subscriptions)
+        subReq = SubscriptionRequest callbackUri Subscribe topic 3600
+    requestSubscription (client subscriptions) hub subReq
+    createPending subscriptions callbackUri subReq
 
 awaitActiveSubscription
   :: Client c
@@ -146,37 +131,35 @@ awaitActiveSubscription
   -> CallbackURI
   -> IO (Either SubscribeError (Chan Notification))
 awaitActiveSubscription subscriptions callbackUri =
-  findPendingSubscription subscriptions callbackUri >>=
-    \case
-      Nothing -> return (Left (UnexpectedError "Pending subscription not found."))
-      Just (Pending _ pendingResult) ->
-        readMVar pendingResult >>=
-           \case
-              Left err -> return (Left err)
-              Right (Active _ notifications) -> return (Right notifications)
+  runExceptT $ do
+    Pending _ pendingResult <- do
+      pending <- lift (findPendingSubscription subscriptions callbackUri)
+      maybe
+        (throwError (UnexpectedError "Pending subscription not found."))
+        return
+        pending
+    Active _ notifications <- ExceptT (readMVar pendingResult)
+    return notifications
 
 deny :: Subscriptions c -> CallbackURI -> Denial -> IO Bool
 deny subscriptions callbackUri denial =
-  findPendingSubscription subscriptions callbackUri >>=
-    \case
-      Just (Pending _ result) ->
-        putMVar result (Left (SubscriptionDenied denial)) *> return True
-      Nothing -> return False
+  findPendingSubscription subscriptions callbackUri >>= \case
+    Just (Pending _ result) ->
+      putMVar result (Left (SubscriptionDenied denial)) *> return True
+    Nothing -> return False
 
 verify :: Subscriptions c -> CallbackURI -> VerificationRequest -> IO Bool
-verify subscriptions callbackUri VerificationRequest { topic = verTopic } =
-  findPendingSubscription subscriptions callbackUri >>=
-    \case
-      Just (Pending subReq@SubscriptionRequest { topic = subTopic } result)
-        | verTopic == subTopic -> do
-          notifications <- newChan
-          putMVar result (Right (Active subReq notifications))
-          return True
-        | otherwise -> do
-          putMVar result (Left VerificationFailed)
-          return False
-      Nothing ->
+verify subscriptions callbackUri VerificationRequest {topic = verTopic} =
+  findPendingSubscription subscriptions callbackUri >>= \case
+    Just (Pending subReq@SubscriptionRequest {topic = subTopic} result)
+      | verTopic == subTopic -> do
+        notifications <- newChan
+        putMVar result (Right (Active subReq notifications))
+        return True
+      | otherwise -> do
+        putMVar result (Left VerificationFailed)
         return False
+    Nothing -> return False
 
 distributeContent :: Subscriptions c -> CallbackURI -> Notification -> IO Bool
 distributeContent subscriptions callbackUri notification =

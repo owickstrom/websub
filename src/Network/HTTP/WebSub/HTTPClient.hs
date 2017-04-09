@@ -3,6 +3,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 module Network.HTTP.WebSub.HTTPClient where
 
+import Control.Monad.Except
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as LBS
 import Data.Function ((&))
@@ -37,10 +38,9 @@ instance Client HTTPSubscriberClient where
     case makeHubRequest hub subReq of
       Just req -> do
         res <- httpLBS req
-        if getResponseStatus res == status202
-          then return (Right ())
-          else return (Left (UnexpectedError (getResponseBody res)))
-      Nothing -> return (Left (InvalidHub hub))
+        unless (getResponseStatus res == status202) $
+          throwError (UnexpectedError (getResponseBody res))
+      Nothing -> throwError (InvalidHub hub)
     where
       makeHubRequest (Hub hub) subReq =
         setRequestMethod "POST" . setRequestBodyLBS (urlEncodeAsForm subReq) <$>

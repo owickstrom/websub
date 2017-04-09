@@ -50,6 +50,7 @@ test-suite websub-test
   main-is:             Spec.hs
   build-depends:       base
                      , hspec
+                     , mtl
                      , network-uri
                      , websub
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N
