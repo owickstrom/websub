@@ -7,6 +7,7 @@ import Control.Concurrent
 import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.Except
+import Network.HTTP.Media ((//))
 import Network.HTTP.WebSub
 import Network.HTTP.WebSub.Subscriber
 import Network.URI as URI
@@ -39,6 +40,7 @@ spec = do
   let topic = Topic URI.nullURI
       hub = Hub URI.nullURI
       callbackUri = CallbackURI URI.nullURI
+      contentDistribution = ContentDistribution ("text" // "plain") "Hello!"
   describe "subscribe" $ do
     it "fails when client fails" $ do
       let err = UnexpectedError "oops"
@@ -51,9 +53,9 @@ spec = do
       subs <- newSubscriptions URI.nullURI client
       subscribe subs hub topic noop >>= \case
         Left err -> expectationFailure (show err)
-        Right subscriptionId -> do
-          deny subs subscriptionId denial `shouldReturn` True
-          awaitActiveSubscription subs subscriptionId `shouldFailWith`
+        Right sId -> do
+          deny subs sId denial `shouldReturn` True
+          awaitActiveSubscription subs sId `shouldFailWith`
             SubscriptionDenied denial
     it "does not activate the subscription when verified with incorrect values" $ do
       let client = StubClient (Right ()) []
@@ -66,9 +68,9 @@ spec = do
       subs <- newSubscriptions URI.nullURI client
       subscribe subs hub topic noop >>= \case
         Left err -> expectationFailure (show err)
-        Right subscriptionId -> do
-          verify subs subscriptionId verReq `shouldReturn` False
-          awaitActiveSubscription subs subscriptionId `shouldFailWith`
+        Right sId -> do
+          verify subs sId verReq `shouldReturn` False
+          awaitActiveSubscription subs sId `shouldFailWith`
             VerificationFailed
     it "activates the subscription when verified with correct values" $ do
       let client = StubClient (Right ()) []
@@ -76,7 +78,21 @@ spec = do
       subs <- newSubscriptions URI.nullURI client
       subscribe subs hub topic noop >>= \case
         Left err -> expectationFailure (show err)
-        Right subscriptionId -> do
-          verify subs subscriptionId verReq `shouldReturn` True
+        Right sId -> do
+          verify subs sId verReq `shouldReturn` True
           void <$>
-            awaitActiveSubscription subs subscriptionId `shouldReturn` Right ()
+            awaitActiveSubscription subs sId `shouldReturn` Right ()
+    it "distributes content" $ do
+      let client = StubClient (Right ()) []
+          verReq = VerificationRequest Subscribe topic "" Nothing
+      distributed <- newEmptyMVar
+      subs <- newSubscriptions URI.nullURI client
+      let onContentDistribution = putMVar distributed
+      subscribe subs hub topic onContentDistribution >>= \case
+        Left err -> expectationFailure (show err)
+        Right sId -> do
+          verify subs sId verReq `shouldReturn` True
+          void <$>
+            awaitActiveSubscription subs sId `shouldReturn` Right ()
+          distributeContent subs sId contentDistribution `shouldReturn` True
+      readMVar distributed `shouldReturn` contentDistribution
