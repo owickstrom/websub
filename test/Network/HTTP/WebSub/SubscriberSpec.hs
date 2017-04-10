@@ -31,6 +31,9 @@ shouldFailWith res expectedErr =
     Left actualErr -> actualErr `shouldBe` expectedErr
     Right _ -> expectationFailure "Did not expected success."
 
+noop :: ContentDistributionCallback
+noop _ = return ()
+
 spec :: Spec
 spec = do
   let topic = Topic URI.nullURI
@@ -41,12 +44,12 @@ spec = do
       let err = UnexpectedError "oops"
           client = StubClient (Left err) []
       subs <- newSubscriptions URI.nullURI client
-      subscribe subs hub topic `shouldFailWith` err
+      subscribe subs hub topic (const (return ())) `shouldFailWith` err
     it "fails when hub denies the subscription" $ do
       let client = StubClient (Right ()) []
           denial = Denial topic "No, sir, you cannot have it."
       subs <- newSubscriptions URI.nullURI client
-      subscribe subs hub topic >>= \case
+      subscribe subs hub topic noop >>= \case
         Left err -> expectationFailure (show err)
         Right subscriptionId -> do
           deny subs subscriptionId denial `shouldReturn` True
@@ -61,7 +64,7 @@ spec = do
               ""
               Nothing
       subs <- newSubscriptions URI.nullURI client
-      subscribe subs hub topic >>= \case
+      subscribe subs hub topic noop >>= \case
         Left err -> expectationFailure (show err)
         Right subscriptionId -> do
           verify subs subscriptionId verReq `shouldReturn` False
@@ -71,7 +74,7 @@ spec = do
       let client = StubClient (Right ()) []
           verReq = VerificationRequest Subscribe topic "" Nothing
       subs <- newSubscriptions URI.nullURI client
-      subscribe subs hub topic >>= \case
+      subscribe subs hub topic noop >>= \case
         Left err -> expectationFailure (show err)
         Right subscriptionId -> do
           verify subs subscriptionId verReq `shouldReturn` True

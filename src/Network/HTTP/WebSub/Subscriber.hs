@@ -9,6 +9,7 @@
 module Network.HTTP.WebSub.Subscriber
   ( SubscriptionId(..)
   , SubscribeError(..)
+  , ContentDistributionCallback
   , Client(..)
   , Subscriptions
   , newSubscriptions
