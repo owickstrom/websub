@@ -97,8 +97,6 @@ instance FromForm VerificationRequest where
         LBS.fromStrict . encodeUtf8 <$> parseUnique "hub.challenge" f
 
 data ContentDistribution = ContentDistribution
-  { hub :: Hub
-  , topic :: Topic
-  , contentType :: MediaType
+  { contentType :: MediaType
   , body :: ByteString
   } deriving (Eq, Ord, Show)

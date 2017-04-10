@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main where
@@ -45,28 +46,26 @@ main =
 
     args -> usage
   where
-    parseUriOrFail s = fromMaybe (fail "") (return <$> parseURI s)
+    parseUriOrFail s = fromMaybe (fail (printf "Invalid URI: %s" s)) (return <$> parseURI s)
 
     subscribeTo topic subscriptions =
       getHubLinks subscriptions topic >>= \case
         [] -> putStrLn "No hub found."
         hub:_ -> do
-          putStrLn $
-            printf "Subscribing to %s through %s." (show topic) (show hub)
-          res <- subscribe subscriptions hub topic
+          printf "Subscribing to %s through %s.\n" (show topic) (show hub)
+          res <- subscribe subscriptions hub topic onContentDistribution
           case res of
-            Left err -> putStrLn $ printf "Subscription failed: %s" (show err)
+            Left err -> printf "Subscription failed: %s\n" (show err)
             Right subscriptionId -> do
-              print $ "Subscription ID: " ++ show subscriptionId
+              putStrLn $ "Subscription ID: " ++ show subscriptionId
               awaitActiveSubscription subscriptions subscriptionId >>=
                 \case
-                  Left err -> putStrLn $ printf "Subscription failed: %s" (show err)
-                  Right notifications ->
-                    void $ forkIO $ forever $ do
-                      notification <- readChan notifications
-                      putStr "Content Type: "
-                      print (contentType notification)
-                      LC.putStrLn (body notification)
+                  Left err -> printf "Subscription failed: %s\n" (show err)
+                  Right () ->
+                    printf "Subscription %s active.\n" (show subscriptionId)
+    onContentDistribution ContentDistribution { contentType, body } = do
+      printf "Content Type: %s\n" (show contentType)
+      LC.putStrLn body
 
     notFound req respond =
       respond $ responseLBS status404 [] "Not Found"

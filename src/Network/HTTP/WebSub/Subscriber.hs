@@ -67,6 +67,8 @@ class Client c where
                       -> ExceptT SubscribeError IO ()
   getHubLinks :: c -> Topic -> IO [Hub]
 
+type ContentDistributionCallback = ContentDistribution -> IO ()
+
 data Pending
 
 data Denied
@@ -76,15 +78,16 @@ data Active
 data Subscription s where
         Pending ::
           SubscriptionRequest ->
-            MVar (Either SubscribeError (Subscription Active)) ->
-              Subscription Pending
+            ContentDistributionCallback ->
+              MVar (Either SubscribeError (Subscription Active)) ->
+                Subscription Pending
         Denied :: SubscriptionRequest -> Subscription Denied
         Active ::
           SubscriptionRequest ->
-            Chan ContentDistribution -> Subscription Active
+            ContentDistributionCallback -> Subscription Active
 
 instance Show (Subscription s) where
-  show (Pending req _) = "(Pending " ++ show req ++ " ...)"
+  show (Pending req _ _) = "(Pending " ++ show req ++ " ...)"
   show (Denied req) = "(Denied " ++ show req ++ ")"
   show (Active req _) = "(Active " ++ show req ++ " ...)"
 
@@ -111,15 +114,23 @@ createPending
   :: Subscriptions c
   -> SubscriptionId
   -> SubscriptionRequest
+  -> ContentDistributionCallback
   -> ExceptT SubscribeError IO ()
-createPending subscriptions subscriptionId req = do
+createPending subscriptions subscriptionId req callback = do
   ready <- lift newEmptyMVar
   lift $
     modifyMVar_
       (pending subscriptions)
-      (return . HM.insert subscriptionId (Pending req ready))
+      (return . HM.insert subscriptionId (Pending req callback ready))
 
-type ContentDistributionCallback = ContentDistribution -> IO ()
+createActive :: Subscriptions c
+             -> SubscriptionId
+             -> Subscription Active
+             -> IO ()
+createActive subscriptions subscriptionId subscription =
+  modifyMVar_
+    (active subscriptions)
+    (return . HM.insert subscriptionId subscription)
 
 findPendingSubscription :: Subscriptions c
                         -> SubscriptionId
@@ -138,8 +149,9 @@ subscribe
   => Subscriptions c
   -> Hub
   -> Topic
+  -> ContentDistributionCallback
   -> IO (Either SubscribeError SubscriptionId)
-subscribe subscriptions hub topic =
+subscribe subscriptions hub topic callback =
   runExceptT $ do
     idStr <- lift randomIdStr
     let base = baseUri subscriptions
@@ -147,11 +159,11 @@ subscribe subscriptions hub topic =
           CallbackURI (base {uriPath = uriPath base ++ "/" ++ idStr})
         subscriptionId = SubscriptionId (C.pack idStr)
         subReq = SubscriptionRequest callbackUri Subscribe topic 3600
-    lift $ print subReq
     -- First create a pending subscription.
-    createPending subscriptions subscriptionId subReq
-    -- Then actually request the subscription from the hub, as it might
-    -- synchronously validate and verify the subscription.
+    createPending subscriptions subscriptionId subReq callback
+    -- Then request the subscription from the hub. The hub might
+    -- synchronously validate and verify the subscription, thus the
+    -- subscription has to be created and added as pending before.
     requestSubscription (client subscriptions) hub subReq
     return subscriptionId
 
@@ -159,35 +171,38 @@ awaitActiveSubscription
   :: Client c
   => Subscriptions c
   -> SubscriptionId
-  -> IO (Either SubscribeError (Chan ContentDistribution))
+  -> IO (Either SubscribeError ())
 awaitActiveSubscription subscriptions subscriptionId =
   runExceptT $ do
-    Pending _ pendingResult <-
+    Pending _ _ pendingResult <-
       do pending <- lift (findPendingSubscription subscriptions subscriptionId)
          maybe
            (throwError (UnexpectedError "Pending subscription not found."))
            return
            pending
-    Active _ notifications <- ExceptT (readMVar pendingResult)
-    return notifications
+    Active _ callback <- ExceptT (readMVar pendingResult)
+    lift $ removePending subscriptions subscriptionId
+    return ()
+
+removePending :: Subscriptions c -> SubscriptionId -> IO ()
+removePending subscriptions subscriptionId =
+  modifyMVar_ (pending subscriptions) (return . HM.delete subscriptionId)
 
 deny :: Subscriptions c -> SubscriptionId -> Denial -> IO Bool
 deny subscriptions subscriptionId denial =
   findPendingSubscription subscriptions subscriptionId >>= \case
-    Just (Pending _ result) ->
+    Just (Pending _ _ result) ->
       putMVar result (Left (SubscriptionDenied denial)) *> return True
     Nothing -> return False
 
 verify :: Subscriptions c -> SubscriptionId -> VerificationRequest -> IO Bool
-verify subscriptions subscriptionId VerificationRequest {topic = verTopic} = do
-  found <- findPendingSubscription subscriptions subscriptionId
-  -- readMVar (pending subscriptions) >>= print
-  -- readMVar (active subscriptions) >>= print
-  case found of
-    Just (Pending subReq@SubscriptionRequest {topic = subTopic} result)
+verify subscriptions subscriptionId VerificationRequest {topic = verTopic} =
+  findPendingSubscription subscriptions subscriptionId >>= \case
+    Just (Pending subReq@SubscriptionRequest {topic = subTopic} callback result)
       | verTopic == subTopic -> do
-        notifications <- newChan
-        putMVar result (Right (Active subReq notifications))
+        let sub = Active subReq callback
+        createActive subscriptions subscriptionId sub
+        putMVar result (Right sub)
         return True
       | otherwise -> do
         putMVar result (Left VerificationFailed)
@@ -200,5 +215,5 @@ distributeContent :: Subscriptions c
                   -> IO Bool
 distributeContent subscriptions subscriptionId notification =
   findActiveSubscription subscriptions subscriptionId >>= \case
-    Just (Active _ chan) -> writeChan chan notification *> return True
+    Just (Active _ callback) -> callback notification *> return True
     Nothing -> return False
