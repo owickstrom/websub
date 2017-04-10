@@ -9,14 +9,14 @@ module Network.HTTP.WebSub where
 
 import Data.ByteString.Lazy (ByteString)
 import Data.ByteString.Lazy as LBS
-import Data.Hashable
 import Data.Monoid ((<>))
 import qualified Data.Text as Text
 import Data.Text.Encoding (encodeUtf8)
 import Network.HTTP.Media.MediaType (MediaType)
 import Network.URI (URI, parseURI)
 import Web.FormUrlEncoded
-import Web.HttpApiData
+       (ToForm, FromForm, toForm, fromForm, parseUnique, parseMaybe)
+import Web.HttpApiData (FromHttpApiData, parseQueryParam)
 
 newtype Topic =
   Topic URI
@@ -35,9 +35,6 @@ newtype Hub =
 newtype CallbackURI =
   CallbackURI URI
   deriving (Eq, Ord, Show)
-
-instance Hashable CallbackURI where
-  hashWithSalt salt = hashWithSalt salt . show
 
 data SubscriptionMode
   = Subscribe

@@ -20,12 +20,13 @@ module Network.HTTP.WebSub.Subscriber
   , distributeContent
   ) where
 
-import Control.Concurrent.Chan
 import Control.Concurrent.MVar
+       (MVar, readMVar, putMVar, newMVar, newEmptyMVar, modifyMVar_)
 import Control.Monad (forever)
 import Control.Monad.Except
+       (ExceptT(..), runExceptT, throwError, lift)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Crypto.Random
+import Crypto.Random (drgNew, withRandomBytes)
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as C
@@ -33,8 +34,8 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Function ((&))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
-import Data.Hashable
-import Data.Hex
+import Data.Hashable (Hashable, hashWithSalt)
+import Data.Hex (hex)
 import Data.Maybe (maybe, catMaybes)
 import Data.Text (Text)
 import Network.HTTP.Link.Parser (parseLinkHeaderBS)
