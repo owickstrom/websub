@@ -70,8 +70,7 @@ spec = do
         Left err -> expectationFailure (show err)
         Right sId -> do
           verify subs sId verReq `shouldReturn` False
-          awaitActiveSubscription subs sId `shouldFailWith`
-            VerificationFailed
+          awaitActiveSubscription subs sId `shouldFailWith` VerificationFailed
     it "activates the subscription when verified with correct values" $ do
       let client = StubClient (Right ()) []
           verReq = VerificationRequest Subscribe topic "" Nothing
@@ -80,8 +79,7 @@ spec = do
         Left err -> expectationFailure (show err)
         Right sId -> do
           verify subs sId verReq `shouldReturn` True
-          void <$>
-            awaitActiveSubscription subs sId `shouldReturn` Right ()
+          void <$> awaitActiveSubscription subs sId `shouldReturn` Right ()
     it "distributes content" $ do
       let client = StubClient (Right ()) []
           verReq = VerificationRequest Subscribe topic "" Nothing
@@ -92,7 +90,6 @@ spec = do
         Left err -> expectationFailure (show err)
         Right sId -> do
           verify subs sId verReq `shouldReturn` True
-          void <$>
-            awaitActiveSubscription subs sId `shouldReturn` Right ()
+          void <$> awaitActiveSubscription subs sId `shouldReturn` Right ()
           distributeContent subs sId contentDistribution `shouldReturn` True
       readMVar distributed `shouldReturn` contentDistribution
