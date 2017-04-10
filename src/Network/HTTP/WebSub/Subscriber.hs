@@ -25,6 +25,7 @@ import Control.Concurrent.MVar
 import Control.Monad (forever)
 import Control.Monad.Except
 import Control.Monad.IO.Class (MonadIO, liftIO)
+import Crypto.Random
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as C
@@ -32,10 +33,10 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Function ((&))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
+import Data.Hashable
+import Data.Hex
 import Data.Maybe (maybe, catMaybes)
 import Data.Text (Text)
-
-import Data.Hashable
 import Network.HTTP.Link.Parser (parseLinkHeaderBS)
 import Network.HTTP.Link.Types
        (Link(..), LinkParam(..), linkParams)
@@ -108,8 +109,11 @@ newSubscriptions :: URI -> c -> IO (Subscriptions c)
 newSubscriptions baseUri client =
   Subscriptions baseUri client <$> newMVar HM.empty <*> newMVar HM.empty
 
-randomIdStr :: IO String
-randomIdStr = return "foo"
+randomId :: IO SubscriptionId
+randomId = do
+  drg <- drgNew
+  let s = hex (fst (withRandomBytes drg 16 id))
+  return (SubscriptionId s)
 
 createPending
   :: Subscriptions c
@@ -154,12 +158,13 @@ subscribe
   -> IO (Either SubscribeError SubscriptionId)
 subscribe subscriptions hub topic callback =
   runExceptT $ do
-    idStr <- lift randomIdStr
+    subscriptionId@(SubscriptionId id') <- lift randomId
     let base = baseUri subscriptions
         callbackUri =
-          CallbackURI (base {uriPath = uriPath base ++ "/" ++ idStr})
-        subscriptionId = SubscriptionId (C.pack idStr)
+          CallbackURI (base {uriPath = uriPath base ++ "/" ++ C.unpack id'})
         subReq = SubscriptionRequest callbackUri Subscribe topic 3600
+    lift $ print callbackUri
+    lift $ print subReq
     -- First create a pending subscription.
     createPending subscriptions subscriptionId subReq callback
     -- Then request the subscription from the hub. The hub might
@@ -170,9 +175,7 @@ subscribe subscriptions hub topic callback =
 
 awaitActiveSubscription
   :: Client c
-  => Subscriptions c
-  -> SubscriptionId
-  -> IO (Either SubscribeError ())
+  => Subscriptions c -> SubscriptionId -> IO (Either SubscribeError ())
 awaitActiveSubscription subscriptions subscriptionId =
   runExceptT $ do
     Pending _ _ pendingResult <-
