@@ -11,9 +11,11 @@
 
 **This library is a work in progress!** The plan is to
 provide an easy-to-use interface for subscribing to WebSub topics in Haskell
-web applications. A basic use case works now, and you can see an example in
+web applications, using a WAI middleware for callbacks.
+
+The most basic subscriber use case works now, and you can see an example in
 [app/Main.hs](app/Main.hs). The project is [run here at
-GitHub](https://github.com/owickstrom/websub/projects/1), see that board for
+GitHub](https://github.com/owickstrom/websub/projects/1), see the board for
 status and progress.
 
 
