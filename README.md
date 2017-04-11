@@ -14,9 +14,10 @@
 
 ## Overview
 
-**This library is a work in progress, not really usable yet!** The plan is to
-provide an easy-to-use interface for subscribing to WebSub topics in Haskell
-web applications.
+**This library is a work in progress!** The plan is to provide an easy-to-use
+interface for subscribing to WebSub topics in Haskell web applications. Basic
+subscription works, and an example application can be found in
+[app/Main.hs](app/Main.hs).
 
 ## Subscription
 
