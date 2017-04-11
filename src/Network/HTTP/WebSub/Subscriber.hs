@@ -20,13 +20,11 @@ module Network.HTTP.WebSub.Subscriber
   , distributeContent
   ) where
 
+import Control.Concurrent.Chan
 import Control.Concurrent.MVar
-       (MVar, readMVar, putMVar, newMVar, newEmptyMVar, modifyMVar_)
 import Control.Monad (forever)
 import Control.Monad.Except
-       (ExceptT(..), runExceptT, throwError, lift)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Crypto.Random (drgNew, withRandomBytes)
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as C
@@ -34,10 +32,10 @@ import qualified Data.ByteString.Lazy as LBS
 import Data.Function ((&))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
-import Data.Hashable (Hashable, hashWithSalt)
-import Data.Hex (hex)
 import Data.Maybe (maybe, catMaybes)
 import Data.Text (Text)
+
+import Data.Hashable
 import Network.HTTP.Link.Parser (parseLinkHeaderBS)
 import Network.HTTP.Link.Types
        (Link(..), LinkParam(..), linkParams)
@@ -64,45 +62,32 @@ data SubscribeError
   deriving (Show, Eq, Ord)
 
 class Client c where
-  requestSubscription :: c
-                      -> Hub
-                      -> SubscriptionRequest
-                      -> ExceptT SubscribeError IO ()
+  requestSubscription ::
+       c -> Hub -> SubscriptionRequest -> ExceptT SubscribeError IO ()
   getHubLinks :: c -> Topic -> IO [Hub]
 
 type ContentDistributionCallback = ContentDistribution -> IO ()
 
-data Pending
+data Pending =
+  Pending SubscriptionRequest
+          ContentDistributionCallback
+          (MVar (Either SubscribeError Subscription))
 
-data Denied
+data Subscription =
+  Subscription SubscriptionRequest
+               ContentDistributionCallback
 
-data Active
-
-data Subscription s where
-        Pending ::
-          SubscriptionRequest ->
-            ContentDistributionCallback ->
-              MVar (Either SubscribeError (Subscription Active)) ->
-                Subscription Pending
-        Denied :: SubscriptionRequest -> Subscription Denied
-        Active ::
-          SubscriptionRequest ->
-            ContentDistributionCallback -> Subscription Active
-
-instance Show (Subscription s) where
-  show (Pending req _ _) = "(Pending " ++ show req ++ " ...)"
-  show (Denied req) = "(Denied " ++ show req ++ ")"
-  show (Active req _) = "(Active " ++ show req ++ " ...)"
+instance Show Subscription where
+  show (Subscription req _) = "(Subscription " ++ show req ++ " ...)"
 
 data Subscriptions c = Subscriptions
   { baseUri :: URI
   , client :: c
-  , pending :: MVar (HashMap SubscriptionId (Subscription Pending))
-  , active :: MVar (HashMap SubscriptionId (Subscription Active))
+  , pending :: MVar (HashMap SubscriptionId Pending)
+  , active :: MVar (HashMap SubscriptionId Subscription)
   }
 
-instance Client c =>
-         Client (Subscriptions c) where
+instance Client c => Client (Subscriptions c) where
   requestSubscription = requestSubscription . client
   getHubLinks = getHubLinks . client
 
@@ -110,14 +95,11 @@ newSubscriptions :: URI -> c -> IO (Subscriptions c)
 newSubscriptions baseUri client =
   Subscriptions baseUri client <$> newMVar HM.empty <*> newMVar HM.empty
 
-randomId :: IO SubscriptionId
-randomId = do
-  drg <- drgNew
-  let s = hex (fst (withRandomBytes drg 16 id))
-  return (SubscriptionId s)
+randomIdStr :: IO String
+randomIdStr = return "foo"
 
-createPending
-  :: Subscriptions c
+createPending ::
+     Subscriptions c
   -> SubscriptionId
   -> SubscriptionRequest
   -> ContentDistributionCallback
@@ -129,29 +111,24 @@ createPending subscriptions subscriptionId req callback = do
       (pending subscriptions)
       (return . HM.insert subscriptionId (Pending req callback ready))
 
-createActive :: Subscriptions c
-             -> SubscriptionId
-             -> Subscription Active
-             -> IO ()
-createActive subscriptions subscriptionId subscription =
+activate :: Subscriptions c -> SubscriptionId -> Subscription -> IO ()
+activate subscriptions subscriptionId subscription =
   modifyMVar_
     (active subscriptions)
     (return . HM.insert subscriptionId subscription)
 
-findPendingSubscription :: Subscriptions c
-                        -> SubscriptionId
-                        -> IO (Maybe (Subscription Pending))
+findPendingSubscription ::
+     Subscriptions c -> SubscriptionId -> IO (Maybe Pending)
 findPendingSubscription subscriptions subscriptionId =
   HM.lookup subscriptionId <$> readMVar (pending subscriptions)
 
-findActiveSubscription :: Subscriptions c
-                       -> SubscriptionId
-                       -> IO (Maybe (Subscription Active))
+findActiveSubscription ::
+     Subscriptions c -> SubscriptionId -> IO (Maybe Subscription)
 findActiveSubscription subscriptions subscriptionId =
   HM.lookup subscriptionId <$> readMVar (active subscriptions)
 
-subscribe
-  :: Client c
+subscribe ::
+     Client c
   => Subscriptions c
   -> Hub
   -> Topic
@@ -159,13 +136,12 @@ subscribe
   -> IO (Either SubscribeError SubscriptionId)
 subscribe subscriptions hub topic callback =
   runExceptT $ do
-    subscriptionId@(SubscriptionId id') <- lift randomId
+    idStr <- lift randomIdStr
     let base = baseUri subscriptions
         callbackUri =
-          CallbackURI (base {uriPath = uriPath base ++ "/" ++ C.unpack id'})
+          CallbackURI (base {uriPath = uriPath base ++ "/" ++ idStr})
+        subscriptionId = SubscriptionId (C.pack idStr)
         subReq = SubscriptionRequest callbackUri Subscribe topic 3600
-    lift $ print callbackUri
-    lift $ print subReq
     -- First create a pending subscription.
     createPending subscriptions subscriptionId subReq callback
     -- Then request the subscription from the hub. The hub might
@@ -174,9 +150,11 @@ subscribe subscriptions hub topic callback =
     requestSubscription (client subscriptions) hub subReq
     return subscriptionId
 
-awaitActiveSubscription
-  :: Client c
-  => Subscriptions c -> SubscriptionId -> IO (Either SubscribeError ())
+awaitActiveSubscription ::
+     Client c
+  => Subscriptions c
+  -> SubscriptionId
+  -> IO (Either SubscribeError ())
 awaitActiveSubscription subscriptions subscriptionId =
   runExceptT $ do
     Pending _ _ pendingResult <-
@@ -185,7 +163,7 @@ awaitActiveSubscription subscriptions subscriptionId =
            (throwError (UnexpectedError "Pending subscription not found."))
            return
            pending
-    Active _ callback <- ExceptT (readMVar pendingResult)
+    Subscription _ callback <- ExceptT (readMVar pendingResult)
     lift $ removePending subscriptions subscriptionId
     return ()
 
@@ -205,8 +183,8 @@ verify subscriptions subscriptionId VerificationRequest {topic = verTopic} =
   findPendingSubscription subscriptions subscriptionId >>= \case
     Just (Pending subReq@SubscriptionRequest {topic = subTopic} callback result)
       | verTopic == subTopic -> do
-        let sub = Active subReq callback
-        createActive subscriptions subscriptionId sub
+        let sub = Subscription subReq callback
+        activate subscriptions subscriptionId sub
         putMVar result (Right sub)
         return True
       | otherwise -> do
@@ -214,11 +192,9 @@ verify subscriptions subscriptionId VerificationRequest {topic = verTopic} =
         return False
     Nothing -> return False
 
-distributeContent :: Subscriptions c
-                  -> SubscriptionId
-                  -> ContentDistribution
-                  -> IO Bool
+distributeContent ::
+     Subscriptions c -> SubscriptionId -> ContentDistribution -> IO Bool
 distributeContent subscriptions subscriptionId notification =
   findActiveSubscription subscriptions subscriptionId >>= \case
-    Just (Active _ callback) -> callback notification *> return True
+    Just (Subscription _ callback) -> callback notification *> return True
     Nothing -> return False
