@@ -6,18 +6,17 @@
 <em>A <a href="https://www.w3.org/TR/websub/">WebSub (RFC7230)</a> client for Haskell</em>
 </p>
 
+<p align="center">
+<a href="https://travis-ci.org/owickstrom/websub">
+<img src="https://travis-ci.org/owickstrom/websub.svg?branch=master" />
+</a>
+</p>
 
 ## Overview
 
-**This library is a work in progress!** The plan is to
+**This library is a work in progress, not really usable yet!** The plan is to
 provide an easy-to-use interface for subscribing to WebSub topics in Haskell
-web applications, using a WAI middleware for callbacks.
-
-The most basic subscriber use case works now, and you can see an example in
-[app/Main.hs](app/Main.hs). The project is [run here at
-GitHub](https://github.com/owickstrom/websub/projects/1), see the board for
-status and progress.
-
+web applications.
 
 ## Subscription
 
