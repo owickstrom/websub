@@ -47,21 +47,24 @@ instance FromHttpApiData SubscriptionMode where
     | t == "unsubscribe" = Right Unsubscribe
     | otherwise = Left ("Invalid SubscriptionMode: " <> t)
 
-newtype Secret = Secret ByteString deriving (Eq)
+newtype Secret =
+  Secret ByteString
+  deriving (Eq)
 
 instance Show Secret where
   show _ = "Secret (...)"
 
-data SubscriptionRequest = SubscriptionRequest
-  { callback :: CallbackURI
+data SubscriptionRequest cb = SubscriptionRequest
+  { callback :: cb
   , mode :: SubscriptionMode
   , topic :: Topic
   , leaseSeconds :: Int
   , secret :: Maybe Secret
   } deriving (Eq, Show)
 
-instance ToForm SubscriptionRequest where
-  toForm SubscriptionRequest { callback = CallbackURI callback
+instance Show cb =>
+         ToForm (SubscriptionRequest cb) where
+  toForm SubscriptionRequest { callback = callback
                              , mode = mode
                              , topic = Topic topic
                              } =
@@ -70,6 +73,9 @@ instance ToForm SubscriptionRequest where
     , ("hub.topic", tshow topic)
     ]
     where
+      tshow
+        :: Show a
+        => a -> Text.Text
       tshow = Text.pack . show
       modeToValue =
         \case

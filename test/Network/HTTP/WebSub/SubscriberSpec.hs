@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 
 module Network.HTTP.WebSub.SubscriberSpec where
 
@@ -44,14 +45,30 @@ spec = do
   describe "subscribe" $ do
     it "fails when client fails" $ do
       let err = UnexpectedError "oops"
+          subReq =
+            SubscriptionRequest
+            { mode = Subscribe
+            , topic = topic
+            , leaseSeconds = 60
+            , secret = Nothing
+            , callback = noop
+            }
           client = StubClient (Left err) []
       subs <- newSubscriptions URI.nullURI client
-      subscribe subs hub topic Nothing noop `shouldFailWith` err
+      subscribe subs hub subReq `shouldFailWith` err
     it "fails when hub denies the subscription" $ do
       let client = StubClient (Right ()) []
+          subReq =
+            SubscriptionRequest
+            { mode = Subscribe
+            , topic = topic
+            , leaseSeconds = 60
+            , secret = Nothing
+            , callback = noop
+            }
           denial = Denial topic "No, sir, you cannot have it."
       subs <- newSubscriptions URI.nullURI client
-      subscribe subs hub topic Nothing noop >>= \case
+      subscribe subs hub subReq >>= \case
         Left err -> expectationFailure (show err)
         Right sId -> do
           deny subs sId denial `shouldReturn` True
@@ -59,6 +76,14 @@ spec = do
             SubscriptionDenied denial
     it "does not activate the subscription when verified with incorrect values" $ do
       let client = StubClient (Right ()) []
+          subReq =
+            SubscriptionRequest
+            { mode = Subscribe
+            , topic = topic
+            , leaseSeconds = 60
+            , secret = Nothing
+            , callback = noop
+            }
           verReq =
             VerificationRequest
               Subscribe
@@ -66,27 +91,42 @@ spec = do
               ""
               Nothing
       subs <- newSubscriptions URI.nullURI client
-      subscribe subs hub topic Nothing noop >>= \case
+      subscribe subs hub subReq >>= \case
         Left err -> expectationFailure (show err)
         Right sId -> do
           verify subs sId verReq `shouldReturn` False
           awaitActiveSubscription subs sId `shouldFailWith` VerificationFailed
     it "activates the subscription when verified with correct values" $ do
       let client = StubClient (Right ()) []
+          subReq =
+            SubscriptionRequest
+            { mode = Subscribe
+            , topic = topic
+            , leaseSeconds = 60
+            , secret = Nothing
+            , callback = noop
+            }
           verReq = VerificationRequest Subscribe topic "" Nothing
       subs <- newSubscriptions URI.nullURI client
-      subscribe subs hub topic Nothing noop >>= \case
+      subscribe subs hub subReq >>= \case
         Left err -> expectationFailure (show err)
         Right sId -> do
           verify subs sId verReq `shouldReturn` True
           void <$> awaitActiveSubscription subs sId `shouldReturn` Right ()
     it "distributes content" $ do
-      let client = StubClient (Right ()) []
-          verReq = VerificationRequest Subscribe topic "" Nothing
       distributed <- newEmptyMVar
+      let client = StubClient (Right ()) []
+          subReq =
+            SubscriptionRequest
+            { mode = Subscribe
+            , topic = topic
+            , leaseSeconds = 60
+            , secret = Nothing
+            , callback = putMVar distributed
+            }
+          verReq = VerificationRequest Subscribe topic "" Nothing
       subs <- newSubscriptions URI.nullURI client
-      let onContentDistribution = putMVar distributed
-      subscribe subs hub topic Nothing onContentDistribution >>= \case
+      subscribe subs hub subReq >>= \case
         Left err -> expectationFailure (show err)
         Right sId -> do
           verify subs sId verReq `shouldReturn` True

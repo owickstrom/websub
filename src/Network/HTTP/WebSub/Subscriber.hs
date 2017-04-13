@@ -64,23 +64,18 @@ data SubscribeError
 class Client c where
   requestSubscription :: c
                       -> Hub
-                      -> SubscriptionRequest
+                      -> SubscriptionRequest CallbackURI
                       -> ExceptT SubscribeError IO ()
   getHubLinks :: c -> Topic -> IO [Hub]
 
 type ContentDistributionCallback = ContentDistribution -> IO ()
 
 data Pending =
-  Pending SubscriptionRequest
-          ContentDistributionCallback
+  Pending (SubscriptionRequest ContentDistributionCallback)
           (MVar (Either SubscribeError Subscription))
 
-data Subscription =
-  Subscription SubscriptionRequest
-               ContentDistributionCallback
-
-instance Show Subscription where
-  show (Subscription req _) = "(Subscription " ++ show req ++ " ...)"
+newtype Subscription =
+  Subscription (SubscriptionRequest ContentDistributionCallback)
 
 data Subscriptions c = Subscriptions
   { baseUri :: URI
@@ -104,15 +99,14 @@ randomIdStr = return "foo"
 createPending
   :: Subscriptions c
   -> SubscriptionId
-  -> SubscriptionRequest
-  -> ContentDistributionCallback
+  -> SubscriptionRequest ContentDistributionCallback
   -> ExceptT SubscribeError IO ()
-createPending subscriptions subscriptionId req callback = do
+createPending subscriptions subscriptionId req = do
   ready <- lift newEmptyMVar
   lift $
     modifyMVar_
       (pending subscriptions)
-      (return . HM.insert subscriptionId (Pending req callback ready))
+      (return . HM.insert subscriptionId (Pending req ready))
 
 activate :: Subscriptions c -> SubscriptionId -> Subscription -> IO ()
 activate subscriptions subscriptionId subscription =
@@ -136,31 +130,21 @@ subscribe
   :: Client c
   => Subscriptions c
   -> Hub
-  -> Topic
-  -> Maybe Secret
-  -> ContentDistributionCallback
+  -> SubscriptionRequest ContentDistributionCallback
   -> IO (Either SubscribeError SubscriptionId)
-subscribe subscriptions hub topic secret callback =
+subscribe subscriptions hub req =
   runExceptT $ do
     idStr <- lift randomIdStr
     let base = baseUri subscriptions
         callbackUri =
           CallbackURI (base {uriPath = uriPath base ++ "/" ++ idStr})
         subscriptionId = SubscriptionId (C.pack idStr)
-        subReq =
-          SubscriptionRequest
-          { callback = callbackUri
-          , mode = Subscribe
-          , topic = topic
-          , leaseSeconds = 3600
-          , secret
-          }
     -- First create a pending subscription.
-    createPending subscriptions subscriptionId subReq callback
+    createPending subscriptions subscriptionId req
     -- Then request the subscription from the hub. The hub might
     -- synchronously validate and verify the subscription, thus the
     -- subscription has to be created and added as pending before.
-    requestSubscription (client subscriptions) hub subReq
+    requestSubscription (client subscriptions) hub $ req { callback = callbackUri }
     return subscriptionId
 
 awaitActiveSubscription
@@ -168,13 +152,13 @@ awaitActiveSubscription
   => Subscriptions c -> SubscriptionId -> IO (Either SubscribeError ())
 awaitActiveSubscription subscriptions subscriptionId =
   runExceptT $ do
-    Pending _ _ pendingResult <-
+    Pending _ pendingResult <-
       do pending <- lift (findPendingSubscription subscriptions subscriptionId)
          maybe
            (throwError (UnexpectedError "Pending subscription not found."))
            return
            pending
-    Subscription _ callback <- ExceptT (readMVar pendingResult)
+    Subscription req <- ExceptT (readMVar pendingResult)
     lift $ removePending subscriptions subscriptionId
     return ()
 
@@ -185,16 +169,16 @@ removePending subscriptions subscriptionId =
 deny :: Subscriptions c -> SubscriptionId -> Denial -> IO Bool
 deny subscriptions subscriptionId denial =
   findPendingSubscription subscriptions subscriptionId >>= \case
-    Just (Pending _ _ result) ->
+    Just (Pending _ result) ->
       putMVar result (Left (SubscriptionDenied denial)) *> return True
     Nothing -> return False
 
 verify :: Subscriptions c -> SubscriptionId -> VerificationRequest -> IO Bool
 verify subscriptions subscriptionId VerificationRequest {topic = verTopic} =
   findPendingSubscription subscriptions subscriptionId >>= \case
-    Just (Pending subReq@SubscriptionRequest {topic = subTopic} callback result)
+    Just (Pending subReq@SubscriptionRequest {topic = subTopic, callback} result)
       | verTopic == subTopic -> do
-        let sub = Subscription subReq callback
+        let sub = Subscription subReq
         activate subscriptions subscriptionId sub
         putMVar result (Right sub)
         return True
@@ -209,5 +193,5 @@ distributeContent :: Subscriptions c
                   -> IO Bool
 distributeContent subscriptions subscriptionId notification =
   findActiveSubscription subscriptions subscriptionId >>= \case
-    Just (Subscription _ callback) -> callback notification *> return True
+    Just (Subscription req) -> callback req notification *> return True
     Nothing -> return False
