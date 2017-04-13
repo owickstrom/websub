@@ -47,13 +47,18 @@ instance FromHttpApiData SubscriptionMode where
     | t == "unsubscribe" = Right Unsubscribe
     | otherwise = Left ("Invalid SubscriptionMode: " <> t)
 
+newtype Secret = Secret ByteString deriving (Eq)
+
+instance Show Secret where
+  show _ = "Secret (...)"
+
 data SubscriptionRequest = SubscriptionRequest
   { callback :: CallbackURI
   , mode :: SubscriptionMode
   , topic :: Topic
   , leaseSeconds :: Int
-                        -- TODO: Add support for secret
-  } deriving (Eq, Ord, Show)
+  , secret :: Maybe Secret
+  } deriving (Eq, Show)
 
 instance ToForm SubscriptionRequest where
   toForm SubscriptionRequest { callback = CallbackURI callback

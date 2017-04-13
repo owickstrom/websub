@@ -46,12 +46,12 @@ spec = do
       let err = UnexpectedError "oops"
           client = StubClient (Left err) []
       subs <- newSubscriptions URI.nullURI client
-      subscribe subs hub topic (const (return ())) `shouldFailWith` err
+      subscribe subs hub topic Nothing noop `shouldFailWith` err
     it "fails when hub denies the subscription" $ do
       let client = StubClient (Right ()) []
           denial = Denial topic "No, sir, you cannot have it."
       subs <- newSubscriptions URI.nullURI client
-      subscribe subs hub topic noop >>= \case
+      subscribe subs hub topic Nothing noop >>= \case
         Left err -> expectationFailure (show err)
         Right sId -> do
           deny subs sId denial `shouldReturn` True
@@ -66,7 +66,7 @@ spec = do
               ""
               Nothing
       subs <- newSubscriptions URI.nullURI client
-      subscribe subs hub topic noop >>= \case
+      subscribe subs hub topic Nothing noop >>= \case
         Left err -> expectationFailure (show err)
         Right sId -> do
           verify subs sId verReq `shouldReturn` False
@@ -75,7 +75,7 @@ spec = do
       let client = StubClient (Right ()) []
           verReq = VerificationRequest Subscribe topic "" Nothing
       subs <- newSubscriptions URI.nullURI client
-      subscribe subs hub topic noop >>= \case
+      subscribe subs hub topic Nothing noop >>= \case
         Left err -> expectationFailure (show err)
         Right sId -> do
           verify subs sId verReq `shouldReturn` True
@@ -86,7 +86,7 @@ spec = do
       distributed <- newEmptyMVar
       subs <- newSubscriptions URI.nullURI client
       let onContentDistribution = putMVar distributed
-      subscribe subs hub topic onContentDistribution >>= \case
+      subscribe subs hub topic Nothing onContentDistribution >>= \case
         Left err -> expectationFailure (show err)
         Right sId -> do
           verify subs sId verReq `shouldReturn` True

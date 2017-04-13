@@ -53,7 +53,7 @@ main =
         [] -> putStrLn "No hub found."
         hub:_ -> do
           printf "Subscribing to %s through %s.\n" (show topic) (show hub)
-          res <- subscribe subscriptions hub topic onContentDistribution
+          res <- subscribe subscriptions hub topic Nothing onContentDistribution
           case res of
             Left err -> printf "Subscription failed: %s\n" (show err)
             Right subscriptionId -> do

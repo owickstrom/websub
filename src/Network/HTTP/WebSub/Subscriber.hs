@@ -62,8 +62,10 @@ data SubscribeError
   deriving (Show, Eq, Ord)
 
 class Client c where
-  requestSubscription ::
-       c -> Hub -> SubscriptionRequest -> ExceptT SubscribeError IO ()
+  requestSubscription :: c
+                      -> Hub
+                      -> SubscriptionRequest
+                      -> ExceptT SubscribeError IO ()
   getHubLinks :: c -> Topic -> IO [Hub]
 
 type ContentDistributionCallback = ContentDistribution -> IO ()
@@ -87,7 +89,8 @@ data Subscriptions c = Subscriptions
   , active :: MVar (HashMap SubscriptionId Subscription)
   }
 
-instance Client c => Client (Subscriptions c) where
+instance Client c =>
+         Client (Subscriptions c) where
   requestSubscription = requestSubscription . client
   getHubLinks = getHubLinks . client
 
@@ -98,8 +101,8 @@ newSubscriptions baseUri client =
 randomIdStr :: IO String
 randomIdStr = return "foo"
 
-createPending ::
-     Subscriptions c
+createPending
+  :: Subscriptions c
   -> SubscriptionId
   -> SubscriptionRequest
   -> ContentDistributionCallback
@@ -117,31 +120,41 @@ activate subscriptions subscriptionId subscription =
     (active subscriptions)
     (return . HM.insert subscriptionId subscription)
 
-findPendingSubscription ::
-     Subscriptions c -> SubscriptionId -> IO (Maybe Pending)
+findPendingSubscription :: Subscriptions c
+                        -> SubscriptionId
+                        -> IO (Maybe Pending)
 findPendingSubscription subscriptions subscriptionId =
   HM.lookup subscriptionId <$> readMVar (pending subscriptions)
 
-findActiveSubscription ::
-     Subscriptions c -> SubscriptionId -> IO (Maybe Subscription)
+findActiveSubscription :: Subscriptions c
+                       -> SubscriptionId
+                       -> IO (Maybe Subscription)
 findActiveSubscription subscriptions subscriptionId =
   HM.lookup subscriptionId <$> readMVar (active subscriptions)
 
-subscribe ::
-     Client c
+subscribe
+  :: Client c
   => Subscriptions c
   -> Hub
   -> Topic
+  -> Maybe Secret
   -> ContentDistributionCallback
   -> IO (Either SubscribeError SubscriptionId)
-subscribe subscriptions hub topic callback =
+subscribe subscriptions hub topic secret callback =
   runExceptT $ do
     idStr <- lift randomIdStr
     let base = baseUri subscriptions
         callbackUri =
           CallbackURI (base {uriPath = uriPath base ++ "/" ++ idStr})
         subscriptionId = SubscriptionId (C.pack idStr)
-        subReq = SubscriptionRequest callbackUri Subscribe topic 3600
+        subReq =
+          SubscriptionRequest
+          { callback = callbackUri
+          , mode = Subscribe
+          , topic = topic
+          , leaseSeconds = 3600
+          , secret
+          }
     -- First create a pending subscription.
     createPending subscriptions subscriptionId subReq callback
     -- Then request the subscription from the hub. The hub might
@@ -150,11 +163,9 @@ subscribe subscriptions hub topic callback =
     requestSubscription (client subscriptions) hub subReq
     return subscriptionId
 
-awaitActiveSubscription ::
-     Client c
-  => Subscriptions c
-  -> SubscriptionId
-  -> IO (Either SubscribeError ())
+awaitActiveSubscription
+  :: Client c
+  => Subscriptions c -> SubscriptionId -> IO (Either SubscribeError ())
 awaitActiveSubscription subscriptions subscriptionId =
   runExceptT $ do
     Pending _ _ pendingResult <-
@@ -192,8 +203,10 @@ verify subscriptions subscriptionId VerificationRequest {topic = verTopic} =
         return False
     Nothing -> return False
 
-distributeContent ::
-     Subscriptions c -> SubscriptionId -> ContentDistribution -> IO Bool
+distributeContent :: Subscriptions c
+                  -> SubscriptionId
+                  -> ContentDistribution
+                  -> IO Bool
 distributeContent subscriptions subscriptionId notification =
   findActiveSubscription subscriptions subscriptionId >>= \case
     Just (Subscription _ callback) -> callback notification *> return True
