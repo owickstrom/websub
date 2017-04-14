@@ -41,7 +41,7 @@ instance Client HTTPSubscriberClient where
       Just req -> do
         res <- httpLBS req
         unless (getResponseStatus res == status202) $
-          throwError (UnexpectedError (getResponseBody res))
+          throwError (UnexpectedError (LBS.toStrict (getResponseBody res)))
       Nothing -> throwError (InvalidHub hub)
     where
       makeHubRequest (Hub hub) subReq = setupReq <$> requestFromUri hub

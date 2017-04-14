@@ -7,11 +7,10 @@
 
 module Network.HTTP.WebSub where
 
-import Data.ByteString.Lazy (ByteString)
-import Data.ByteString.Lazy as LBS
+import Data.ByteString (ByteString)
 import Data.Monoid ((<>))
 import qualified Data.Text as Text
-import Data.Text.Encoding (encodeUtf8)
+import Data.Text.Encoding (encodeUtf8, decodeUtf8)
 import Network.HTTP.Media.MediaType (MediaType)
 import Network.URI (URI, parseURI)
 import Web.FormUrlEncoded
@@ -35,6 +34,9 @@ newtype Hub =
 newtype CallbackURI =
   CallbackURI URI
   deriving (Eq, Ord, Show)
+
+instance ToForm CallbackURI where
+  toForm (CallbackURI uri) = [("hub.callback", Text.pack (show uri))]
 
 data SubscriptionMode
   = Subscribe
@@ -62,25 +64,21 @@ data SubscriptionRequest cb = SubscriptionRequest
   , secret :: Maybe Secret
   } deriving (Eq, Show)
 
-instance Show cb =>
+instance ToForm cb =>
          ToForm (SubscriptionRequest cb) where
-  toForm SubscriptionRequest { callback = callback
-                             , mode = mode
-                             , topic = Topic topic
-                             } =
-    [ ("hub.callback", tshow callback)
-    , ("hub.mode", modeToValue mode)
-    , ("hub.topic", tshow topic)
-    ]
+  toForm SubscriptionRequest {callback, mode, topic = Topic topic, secret} =
+    toForm callback <> secretField <>
+    [("hub.mode", modeToValue mode), ("hub.topic", tshow topic)]
     where
-      tshow
-        :: Show a
-        => a -> Text.Text
       tshow = Text.pack . show
       modeToValue =
         \case
           Subscribe -> "subscribe"
           Unsubscribe -> "unsubscribe"
+      secretField =
+        case secret of
+          Just (Secret s) -> [("hub.secret", decodeUtf8 s)]
+          Nothing -> []
 
 data Denial = Denial
   { topic :: Topic
@@ -101,10 +99,15 @@ instance FromForm VerificationRequest where
     parseChallenge <*>
     parseMaybe "hub.lease_seconds" f
     where
-      parseChallenge =
-        LBS.fromStrict . encodeUtf8 <$> parseUnique "hub.challenge" f
+      parseChallenge = encodeUtf8 <$> parseUnique "hub.challenge" f
 
-data ContentDistribution = ContentDistribution
+data ContentDigest = ContentDigest
+  { method :: ByteString
+  , signature :: ByteString
+  } deriving (Eq, Ord, Show)
+
+data ContentDistribution digest = ContentDistribution
   { contentType :: MediaType
   , body :: ByteString
+  , digest :: digest
   } deriving (Eq, Ord, Show)

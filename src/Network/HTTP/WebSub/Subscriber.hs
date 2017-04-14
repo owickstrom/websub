@@ -18,6 +18,7 @@ module Network.HTTP.WebSub.Subscriber
   , deny
   , verify
   , distributeContent
+  , distributeContentAuthenticated
   ) where
 
 import Control.Concurrent.Chan
@@ -26,16 +27,20 @@ import Control.Monad (forever)
 import Control.Monad.Except
 import Control.Monad.IO.Class (MonadIO, liftIO)
 
+import Crypto.Hash
+import Crypto.MAC.HMAC
+
+import Data.ByteArray (Bytes, convert, constEq)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as Base16
 import qualified Data.ByteString.Char8 as C
-import qualified Data.ByteString.Lazy as LBS
 import Data.Function ((&))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
+import Data.Hashable
 import Data.Maybe (maybe, catMaybes)
 import Data.Text (Text)
 
-import Data.Hashable
 import Network.HTTP.Link.Parser (parseLinkHeaderBS)
 import Network.HTTP.Link.Types
        (Link(..), LinkParam(..), linkParams)
@@ -58,7 +63,7 @@ data SubscribeError
   = InvalidHub Hub
   | SubscriptionDenied Denial
   | VerificationFailed
-  | UnexpectedError LBS.ByteString
+  | UnexpectedError BS.ByteString
   deriving (Show, Eq, Ord)
 
 class Client c where
@@ -68,7 +73,7 @@ class Client c where
                       -> ExceptT SubscribeError IO ()
   getHubLinks :: c -> Topic -> IO [Hub]
 
-type ContentDistributionCallback = ContentDistribution -> IO ()
+type ContentDistributionCallback = ContentDistribution () -> IO ()
 
 data Pending =
   Pending (SubscriptionRequest ContentDistributionCallback)
@@ -144,7 +149,8 @@ subscribe subscriptions hub req =
     -- Then request the subscription from the hub. The hub might
     -- synchronously validate and verify the subscription, thus the
     -- subscription has to be created and added as pending before.
-    requestSubscription (client subscriptions) hub $ req { callback = callbackUri }
+    requestSubscription (client subscriptions) hub $
+      req {callback = callbackUri}
     return subscriptionId
 
 awaitActiveSubscription
@@ -189,9 +195,44 @@ verify subscriptions subscriptionId VerificationRequest {topic = verTopic} =
 
 distributeContent :: Subscriptions c
                   -> SubscriptionId
-                  -> ContentDistribution
+                  -> ContentDistribution ()
                   -> IO Bool
-distributeContent subscriptions subscriptionId notification =
+distributeContent subscriptions subscriptionId distribution =
   findActiveSubscription subscriptions subscriptionId >>= \case
-    Just (Subscription req) -> callback req notification *> return True
+    Just (Subscription SubscriptionRequest {callback, secret = Nothing}) ->
+      callback distribution *> return True
+    _ -> return False
+
+isValidDigest :: Secret -> BS.ByteString -> ContentDigest -> Bool
+isValidDigest secret body digest =
+  case digest' secret digest body of
+    Just expectedBytes -> Base16.encode expectedBytes `constEq` signature digest
+    Nothing -> False
+  where
+    digest' :: Secret -> ContentDigest -> BS.ByteString -> Maybe BS.ByteString
+    digest' (Secret secret) ContentDigest {method} body
+      | method == "sha1" = Just (convert (hmac secret body :: HMAC SHA1))
+      | method == "sha256" = Just (convert (hmac secret body :: HMAC SHA256))
+      | method == "sha384" = Just (convert (hmac secret body :: HMAC SHA384))
+      | method == "sha512" = Just (convert (hmac secret body :: HMAC SHA512))
+      | otherwise = Nothing
+
+distributeContentAuthenticated
+  :: Subscriptions c
+  -> SubscriptionId
+  -> ContentDistribution ContentDigest
+  -> IO Bool
+distributeContentAuthenticated subscriptions subscriptionId distribution =
+  findActiveSubscription subscriptions subscriptionId >>= \case
+    Just (Subscription req) -> distributeReq req
     Nothing -> return False
+  where
+    distributeReq :: SubscriptionRequest ContentDistributionCallback -> IO Bool
+    distributeReq SubscriptionRequest {callback, secret} = do
+      let shouldDistribute =
+            case (secret, distribution) of
+              (Just secret, ContentDistribution {body, digest}) ->
+                isValidDigest secret body digest
+              _ -> True
+      when shouldDistribute (callback distribution {digest = ()})
+      return shouldDistribute

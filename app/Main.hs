@@ -67,7 +67,7 @@ main =
               SubscriptionRequest
               { topic = topic
               , mode = Subscribe
-              , secret = Nothing
+              , secret = Just (Secret "foo")
               , leaseSeconds = 3600
               , callback = onContentDistribution
               }
@@ -81,5 +81,5 @@ main =
                   printf "Subscription %s active.\n" (show subscriptionId)
     onContentDistribution ContentDistribution {contentType, body} = do
       printf "Content Type: %s\n" (show contentType)
-      LC.putStrLn body
+      C.putStrLn body
     notFound req respond = respond $ responseLBS status404 [] "Not Found"
