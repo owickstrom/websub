@@ -38,8 +38,9 @@ import Data.Function ((&))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import Data.Hashable
-import Data.Maybe (maybe, catMaybes)
+import Data.Maybe (fromMaybe, maybe, catMaybes)
 import Data.Text (Text)
+import Data.Time
 
 import Network.HTTP.Link.Parser (parseLinkHeaderBS)
 import Network.HTTP.Link.Types
@@ -66,6 +67,11 @@ data SubscribeError
   | UnexpectedError BS.ByteString
   deriving (Show, Eq, Ord)
 
+data SubscribeResult = SubscribeResult
+  { topic :: Topic
+  , expires :: UTCTime
+  } deriving (Show, Eq, Ord)
+
 class Client c where
   requestSubscription :: c
                       -> Hub
@@ -79,8 +85,9 @@ data Pending =
   Pending (SubscriptionRequest ContentDistributionCallback)
           (MVar (Either SubscribeError Subscription))
 
-newtype Subscription =
+data Subscription =
   Subscription (SubscriptionRequest ContentDistributionCallback)
+               SubscribeResult
 
 data Subscriptions c = Subscriptions
   { baseUri :: URI
@@ -155,7 +162,9 @@ subscribe subscriptions hub req =
 
 awaitActiveSubscription
   :: Client c
-  => Subscriptions c -> SubscriptionId -> IO (Either SubscribeError ())
+  => Subscriptions c
+  -> SubscriptionId
+  -> IO (Either SubscribeError SubscribeResult)
 awaitActiveSubscription subscriptions subscriptionId =
   runExceptT $ do
     Pending _ pendingResult <-
@@ -164,9 +173,9 @@ awaitActiveSubscription subscriptions subscriptionId =
            (throwError (UnexpectedError "Pending subscription not found."))
            return
            pending
-    Subscription req <- ExceptT (readMVar pendingResult)
+    Subscription req res <- ExceptT (readMVar pendingResult)
     lift $ removePending subscriptions subscriptionId
-    return ()
+    return res
 
 removePending :: Subscriptions c -> SubscriptionId -> IO ()
 removePending subscriptions subscriptionId =
@@ -180,11 +189,22 @@ deny subscriptions subscriptionId denial =
     Nothing -> return False
 
 verify :: Subscriptions c -> SubscriptionId -> VerificationRequest -> IO Bool
-verify subscriptions subscriptionId VerificationRequest {topic = verTopic} =
+verify subscriptions subscriptionId verReq@VerificationRequest { topic = verTopic
+                                                               , leaseSeconds = verLeaseSeconds
+                                                               } =
   findPendingSubscription subscriptions subscriptionId >>= \case
-    Just (Pending subReq@SubscriptionRequest {topic = subTopic, callback} result)
+    Just (Pending subReq@SubscriptionRequest { topic = subTopic
+                                             , leaseSeconds = subLeaseSeconds
+                                             , callback
+                                             } result)
       | verTopic == subTopic -> do
-        let sub = Subscription subReq
+        now <- getCurrentTime
+        let seconds = fromMaybe subLeaseSeconds verLeaseSeconds
+            expires = fromIntegral seconds `addUTCTime` now
+            sub =
+              Subscription
+                subReq
+                SubscribeResult {topic = verTopic, expires = expires}
         activate subscriptions subscriptionId sub
         putMVar result (Right sub)
         return True
@@ -199,15 +219,15 @@ distributeContent :: Subscriptions c
                   -> IO Bool
 distributeContent subscriptions subscriptionId distribution =
   findActiveSubscription subscriptions subscriptionId >>= \case
-    Just (Subscription SubscriptionRequest {callback, secret = Nothing}) ->
+    Just (Subscription SubscriptionRequest {callback, secret = Nothing} _) ->
       callback distribution *> return True
     _ -> return False
 
 isValidDigest :: Secret -> BS.ByteString -> ContentDigest -> Bool
 isValidDigest secret body digest =
   case (digest' secret digest body, Base16.decode (signature digest)) of
-    (Just expected, (fromHub, rest)) | BS.null rest ->
-      expected `constEq` fromHub
+    (Just expected, (fromHub, rest))
+      | BS.null rest -> expected `constEq` fromHub
     _ -> False
   where
     digest' :: Secret -> ContentDigest -> BS.ByteString -> Maybe BS.ByteString
@@ -225,7 +245,7 @@ distributeContentAuthenticated
   -> IO Bool
 distributeContentAuthenticated subscriptions subscriptionId distribution =
   findActiveSubscription subscriptions subscriptionId >>= \case
-    Just (Subscription req) -> distributeReq req
+    Just (Subscription req _) -> distributeReq req
     Nothing -> return False
   where
     distributeReq :: SubscriptionRequest ContentDistributionCallback -> IO Bool
