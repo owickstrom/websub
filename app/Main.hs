@@ -77,8 +77,12 @@ main =
               putStrLn $ "Subscription ID: " ++ show subscriptionId
               awaitActiveSubscription subscriptions subscriptionId >>= \case
                 Left err -> printf "Subscription failed: %s\n" (show err)
-                Right res ->
-                  printf "Subscription %s active: %s\n" (show subscriptionId) (show res)
+                Right SubscribeResult {expires, leaseSeconds} ->
+                  printf
+                    "Subscription %s active, will expire at %s, in %d seconds.\n"
+                    (show subscriptionId)
+                    (show expires)
+                    leaseSeconds
     onContentDistribution ContentDistribution {contentType, body} = do
       printf "Content Type: %s\n" (show contentType)
       C.putStrLn body

@@ -9,6 +9,7 @@
 module Network.HTTP.WebSub.Subscriber
   ( SubscriptionId(..)
   , SubscribeError(..)
+  , SubscribeResult(..)
   , ContentDistributionCallback
   , Client(..)
   , Subscriptions
@@ -70,6 +71,7 @@ data SubscribeError
 data SubscribeResult = SubscribeResult
   { topic :: Topic
   , expires :: UTCTime
+  , leaseSeconds :: Int
   } deriving (Show, Eq, Ord)
 
 class Client c where
@@ -204,7 +206,8 @@ verify subscriptions subscriptionId verReq@VerificationRequest { topic = verTopi
             sub =
               Subscription
                 subReq
-                SubscribeResult {topic = verTopic, expires = expires}
+                SubscribeResult
+                {topic = verTopic, expires = expires, leaseSeconds = seconds}
         activate subscriptions subscriptionId sub
         putMVar result (Right sub)
         return True
