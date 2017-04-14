@@ -205,9 +205,10 @@ distributeContent subscriptions subscriptionId distribution =
 
 isValidDigest :: Secret -> BS.ByteString -> ContentDigest -> Bool
 isValidDigest secret body digest =
-  case digest' secret digest body of
-    Just expectedBytes -> Base16.encode expectedBytes `constEq` signature digest
-    Nothing -> False
+  case (digest' secret digest body, Base16.decode (signature digest)) of
+    (Just expected, (fromHub, rest)) | BS.null rest ->
+      expected `constEq` fromHub
+    _ -> False
   where
     digest' :: Secret -> ContentDigest -> BS.ByteString -> Maybe BS.ByteString
     digest' (Secret secret) ContentDigest {method} body
