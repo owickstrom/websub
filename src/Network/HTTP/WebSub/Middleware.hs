@@ -1,27 +1,20 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NamedFieldPuns #-}
-
+-- | A WAI middleware for integrating WebSub into Haskell web
+-- applications.
 module Network.HTTP.WebSub.Middleware
   ( subscriptionCallbacks
   ) where
 
-import Crypto.Hash
-       (HashAlgorithm, Digest, digestFromByteString, SHA1, SHA256, SHA384,
-        SHA512)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as LBS
 import Data.CaseInsensitive (CI)
-import Data.Function ((&))
 import qualified Data.HashMap.Lazy as HM
-import Data.Maybe (catMaybes)
 import Data.Monoid ((<>))
 import Data.Text (Text)
 import Data.Text.Encoding (decodeUtf8, encodeUtf8)
-import Network.HTTP.Link.Parser (parseLinkHeaderBS)
-import Network.HTTP.Link.Types
-       (Link(..), LinkParam(..), href, linkParams)
 import Network.HTTP.Media ((//))
 import Network.HTTP.Types.Header (hContentType)
 import Network.HTTP.Types.Method (methodGet, methodPost)
@@ -96,7 +89,9 @@ distributeContentHandler subscriptions subscriptionId req respond =
             distribution {digest = digest}
         Nothing -> distributeContent subscriptions subscriptionId distribution
 
--- TODO: This ain't exactly pretty, should be broken up.
+-- | Given a 'Subscriptions', and a subscription callback base URI,
+-- return a middleware that receives callbacks and distributes content
+-- to the correct subscribers.
 subscriptionCallbacks :: Subscriptions c -> BS.ByteString -> Middleware
 subscriptionCallbacks subscriptions basePath app req respond =
   case (requestMethod req, BS.stripPrefix (basePath <> "/") (rawPathInfo req)) of
@@ -105,7 +100,7 @@ subscriptionCallbacks subscriptions basePath app req respond =
         respond $ responseLBS status404 [] "Subscription Not Found"
       | otherwise ->
         case method of
-          method
+          _
             | method == methodGet ->
               verifySubscriptionHandler
                 subscriptions

@@ -22,38 +22,28 @@ module Network.HTTP.WebSub.Subscriber
   , distributeContentAuthenticated
   ) where
 
-import Control.Concurrent.Chan
 import Control.Concurrent.MVar
-import Control.Monad (forever)
 import Control.Monad.Except
-import Control.Monad.IO.Class (MonadIO, liftIO)
 
 import Crypto.Hash
 import Crypto.MAC.HMAC
 
-import Data.ByteArray (Bytes, convert, constEq)
+import Data.ByteArray (convert, constEq)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as Base16
 import qualified Data.ByteString.Char8 as C
-import Data.Function ((&))
 import Data.HashMap.Strict (HashMap)
 import qualified Data.HashMap.Strict as HM
 import Data.Hashable
-import Data.Maybe (fromMaybe, maybe, catMaybes)
-import Data.Text (Text)
+import Data.Maybe (fromMaybe, maybe)
 import Data.Time
 
-import Network.HTTP.Link.Parser (parseLinkHeaderBS)
-import Network.HTTP.Link.Types
-       (Link(..), LinkParam(..), linkParams)
-import Network.HTTP.Media.MediaType (MediaType)
-import Network.HTTP.Simple as HTTP
-import Network.HTTP.Types.Status (status202)
+import System.Random
+
 import Network.HTTP.WebSub
 import Network.URI
 
-import Web.FormUrlEncoded
-
+-- | A unique ID for a subscription.
 newtype SubscriptionId =
   SubscriptionId BS.ByteString
   deriving (Show, Eq)
@@ -61,6 +51,8 @@ newtype SubscriptionId =
 instance Hashable SubscriptionId where
   hashWithSalt salt = hashWithSalt salt . show
 
+-- | The different types of errors that can occur when subscribing to
+-- a topic.
 data SubscribeError
   = InvalidHub Hub
   | SubscriptionDenied Denial
@@ -68,12 +60,17 @@ data SubscribeError
   | UnexpectedError BS.ByteString
   deriving (Show, Eq, Ord)
 
+-- | The result of subscribing to a topic successfully, including
+-- when, and in how many seconds, the subscription expires. This value
+-- is ultimately decided by the hub, as per the WebSub specification.
 data SubscribeResult = SubscribeResult
   { topic :: Topic
   , expires :: UTCTime
   , leaseSeconds :: Int
   } deriving (Show, Eq, Ord)
 
+-- | A Client sends subscription requests to hubs, and extracts valid
+-- 'Hub' values from 'Topic' HTTP resource headers.
 class Client c where
   requestSubscription :: c
                       -> Hub
@@ -81,16 +78,26 @@ class Client c where
                       -> ExceptT SubscribeError IO ()
   getHubLinks :: c -> Topic -> IO [Hub]
 
+-- | A callback function, returning an 'IO' action, is evaluated when
+-- the content is distributed for the corresponding subscription.
 type ContentDistributionCallback = ContentDistribution () -> IO ()
 
+-- | A pending subscription, i.e. on that has not been denied or
+-- verified yet.
 data Pending =
   Pending (SubscriptionRequest ContentDistributionCallback)
           (MVar (Either SubscribeError Subscription))
 
+-- | A subscription that has been verified, and that is considered
+-- active.
 data Subscription =
   Subscription (SubscriptionRequest ContentDistributionCallback)
                SubscribeResult
 
+-- | The 'Subscriptions' structure holds all data needed to request
+-- new subscriptions, and to distribute content for existing
+-- subscriptions. This data structure is the center of the
+-- "Subscriptions" module.
 data Subscriptions c = Subscriptions
   { baseUri :: URI
   , client :: c
@@ -98,17 +105,24 @@ data Subscriptions c = Subscriptions
   , active :: MVar (HashMap SubscriptionId Subscription)
   }
 
+-- | A 'Subscriptions' value is itself a 'Client', by proxying the
+-- underlying 'Client'.
 instance Client c =>
          Client (Subscriptions c) where
   requestSubscription = requestSubscription . client
   getHubLinks = getHubLinks . client
 
+-- | Create a 'Subscriptions' value using a base 'URI' and a 'Client'.
 newSubscriptions :: URI -> c -> IO (Subscriptions c)
 newSubscriptions baseUri client =
   Subscriptions baseUri client <$> newMVar HM.empty <*> newMVar HM.empty
 
+-- Generates a new random subscription ID string.
 randomIdStr :: IO String
-randomIdStr = return "foo"
+randomIdStr = do
+  gen <- newStdGen
+  -- TODO: Improve this?
+  return (take 32 (randomRs ('a','z') gen))
 
 createPending
   :: Subscriptions c
