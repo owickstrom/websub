@@ -1,31 +1,31 @@
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE OverloadedLabels #-}
+{-# LANGUAGE LambdaCase            #-}
+{-# LANGUAGE NamedFieldPuns        #-}
+{-# LANGUAGE OverloadedLabels      #-}
+{-# LANGUAGE OverloadedStrings     #-}
 
 module Main where
 
-import Control.Concurrent (forkIO, threadDelay)
-import Control.Concurrent.Chan
-import Control.Monad (void, forever)
-import qualified Data.ByteString.Char8 as C
-import qualified Data.ByteString.Lazy.Char8 as LC
-import Data.Maybe
-import Data.Monoid ((<>))
-import Network.HTTP.Media.MediaType (MediaType, (//))
-import Network.HTTP.Types.Status (status404)
-import Network.HTTP.WebSub
-import Network.HTTP.WebSub.HTTPClient
-import Network.HTTP.WebSub.Middleware
-import Network.HTTP.WebSub.Subscriber
-import Network.URI
-import Network.Wai
-import Network.Wai.Handler.Warp (run)
+import           Control.Concurrent             (forkIO, threadDelay)
+import           Control.Concurrent.Chan
+import           Control.Monad                  (forever, void)
+import qualified Data.ByteString.Char8          as C
+import qualified Data.ByteString.Lazy.Char8     as LC
+import           Data.Maybe
+import           Data.Monoid                    ((<>))
+import           Network.HTTP.Media.MediaType   (MediaType, (//))
+import           Network.HTTP.Types.Status      (status404)
+import           Network.HTTP.WebSub
+import           Network.HTTP.WebSub.HTTPClient
+import           Network.HTTP.WebSub.Middleware
+import           Network.HTTP.WebSub.Subscriber
+import           Network.URI
+import           Network.Wai
+import           Network.Wai.Handler.Warp       (run)
 
-import System.Environment
-import System.IO (hPutStrLn, stderr)
-import Text.Printf
+import           System.Environment
+import           System.IO                      (hPutStrLn, stderr)
+import           Text.Printf
 
 usage :: IO ()
 usage = hPutStrLn stderr "Usage: websub-exe BASE_URI TOPIC_URI"
